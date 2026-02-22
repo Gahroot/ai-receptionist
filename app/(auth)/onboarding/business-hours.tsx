@@ -1,0 +1,163 @@
+import { useState } from 'react';
+import { ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import { YStack, XStack, Text, Input, Button, Switch, Separator } from 'tamagui';
+import { ArrowLeft } from 'lucide-react-native';
+import { colors } from '../../../constants/theme';
+
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+interface DaySchedule {
+  enabled: boolean;
+  open: string;
+  close: string;
+}
+
+const DEFAULT_SCHEDULE: Record<string, DaySchedule> = {
+  Monday: { enabled: true, open: '9:00 AM', close: '5:00 PM' },
+  Tuesday: { enabled: true, open: '9:00 AM', close: '5:00 PM' },
+  Wednesday: { enabled: true, open: '9:00 AM', close: '5:00 PM' },
+  Thursday: { enabled: true, open: '9:00 AM', close: '5:00 PM' },
+  Friday: { enabled: true, open: '9:00 AM', close: '5:00 PM' },
+  Saturday: { enabled: false, open: '10:00 AM', close: '2:00 PM' },
+  Sunday: { enabled: false, open: '10:00 AM', close: '2:00 PM' },
+};
+
+export default function OnboardingBusinessHoursScreen() {
+  const router = useRouter();
+  const [is24_7, setIs24_7] = useState(false);
+  const [schedule, setSchedule] = useState<Record<string, DaySchedule>>(DEFAULT_SCHEDULE);
+
+  const updateDay = (day: string, field: keyof DaySchedule, value: string | boolean) => {
+    setSchedule((prev) => ({
+      ...prev,
+      [day]: { ...prev[day], [field]: value },
+    }));
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+      {/* Header */}
+      <XStack paddingHorizontal="$4" paddingVertical="$3" alignItems="center" gap="$3">
+        <Button
+          size="$3"
+          circular
+          backgroundColor={colors.backgroundSecondary}
+          pressStyle={{ backgroundColor: colors.surfaceSecondary }}
+          onPress={() => router.back()}
+          icon={<ArrowLeft size={20} color={colors.textPrimary} />}
+        />
+        <YStack flex={1}>
+          <Text fontSize={14} color={colors.textSecondary}>Step 4 of 5</Text>
+          <Text fontSize={18} fontWeight="700" color={colors.textPrimary}>
+            Business Hours
+          </Text>
+        </YStack>
+      </XStack>
+
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+        <YStack paddingHorizontal="$4" gap="$4" paddingTop="$2">
+          <Text fontSize={14} color={colors.textSecondary} lineHeight={20}>
+            Set your business hours so the AI knows when you're open. It can handle calls
+            differently during and after hours.
+          </Text>
+
+          {/* 24/7 Toggle */}
+          <XStack
+            padding="$4"
+            backgroundColor={colors.backgroundSecondary}
+            borderRadius="$4"
+            alignItems="center"
+            justifyContent="space-between"
+          >
+            <YStack gap="$1">
+              <Text fontSize={15} fontWeight="600" color={colors.textPrimary}>
+                Available 24/7
+              </Text>
+              <Text fontSize={13} color={colors.textSecondary}>
+                AI answers calls at all times
+              </Text>
+            </YStack>
+            <Switch
+              size="$3"
+              checked={is24_7}
+              onCheckedChange={setIs24_7}
+              backgroundColor={is24_7 ? colors.primary : colors.borderLight}
+            >
+              <Switch.Thumb backgroundColor="white" />
+            </Switch>
+          </XStack>
+
+          {/* Day Schedule */}
+          {!is24_7 && (
+            <YStack
+              borderRadius="$4"
+              borderWidth={1}
+              borderColor={colors.borderLight}
+              overflow="hidden"
+            >
+              {DAYS.map((day, idx) => (
+                <YStack key={day}>
+                  {idx > 0 && <Separator borderColor={colors.borderLight} />}
+                  <YStack padding="$3" gap="$2">
+                    <XStack alignItems="center" justifyContent="space-between">
+                      <Text fontSize={15} fontWeight="600" color={colors.textPrimary}>
+                        {day}
+                      </Text>
+                      <Switch
+                        size="$2"
+                        checked={schedule[day].enabled}
+                        onCheckedChange={(val) => updateDay(day, 'enabled', val)}
+                        backgroundColor={schedule[day].enabled ? colors.primary : colors.borderLight}
+                      >
+                        <Switch.Thumb backgroundColor="white" />
+                      </Switch>
+                    </XStack>
+                    {schedule[day].enabled && (
+                      <XStack gap="$2" alignItems="center">
+                        <Input
+                          flex={1}
+                          size="$3"
+                          value={schedule[day].open}
+                          onChangeText={(val) => updateDay(day, 'open', val)}
+                          borderRadius="$3"
+                          borderColor={colors.border}
+                          textAlign="center"
+                        />
+                        <Text fontSize={14} color={colors.textSecondary}>to</Text>
+                        <Input
+                          flex={1}
+                          size="$3"
+                          value={schedule[day].close}
+                          onChangeText={(val) => updateDay(day, 'close', val)}
+                          borderRadius="$3"
+                          borderColor={colors.border}
+                          textAlign="center"
+                        />
+                      </XStack>
+                    )}
+                  </YStack>
+                </YStack>
+              ))}
+            </YStack>
+          )}
+
+          {/* Continue */}
+          <Button
+            size="$5"
+            backgroundColor={colors.primary}
+            color="white"
+            borderRadius="$4"
+            fontWeight="600"
+            pressStyle={{ opacity: 0.8 }}
+            onPress={() => router.push('/(auth)/onboarding/complete')}
+            marginTop="$2"
+          >
+            Continue
+          </Button>
+        </YStack>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
