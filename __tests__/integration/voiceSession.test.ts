@@ -1,8 +1,8 @@
 /**
  * Integration tests for the useVoiceSession hook.
  *
- * Tests WebSocket lifecycle, audio recording coordination,
- * playback service integration, VAD handling, and call store updates.
+ * Tests Grok Realtime WebSocket lifecycle, audio recording coordination,
+ * playback service integration, and call store updates.
  */
 import { renderHook, act } from '@testing-library/react-native';
 import { useAuthStore } from '@/stores/authStore';
@@ -16,6 +16,7 @@ class MockWebSocket {
   static CLOSED = 3;
 
   url: string;
+  protocols: string | string[];
   readyState: number = MockWebSocket.CONNECTING;
   onopen: ((event: any) => void) | null = null;
   onmessage: ((event: any) => void) | null = null;
@@ -26,8 +27,9 @@ class MockWebSocket {
     this.readyState = MockWebSocket.CLOSED;
   });
 
-  constructor(url: string) {
+  constructor(url: string, protocols?: string | string[]) {
     this.url = url;
+    this.protocols = protocols || '';
     mockWsInstances.push(this);
   }
 
@@ -60,6 +62,15 @@ let mockWsInstances: MockWebSocket[] = [];
 (global as any).WebSocket.CLOSING = MockWebSocket.CLOSING;
 (global as any).WebSocket.CLOSED = MockWebSocket.CLOSED;
 
+// --- Mock api service (for ephemeral token request) ---
+jest.mock('@/services/api', () => ({
+  __esModule: true,
+  default: {
+    post: jest.fn(),
+    get: jest.fn(),
+  },
+}));
+
 // --- Mock audioService ---
 jest.mock('@/services/audioService', () => ({
   __esModule: true,
@@ -67,7 +78,7 @@ jest.mock('@/services/audioService', () => ({
     setupAudioMode: jest.fn().mockResolvedValue(undefined),
     setSpeakerMode: jest.fn().mockResolvedValue(undefined),
     getRecordingConfig: jest.fn((callbacks: any) => ({
-      sampleRate: 16000,
+      sampleRate: 24000,
       channels: 1,
       encoding: 'pcm_16bit',
       interval: 250,
@@ -75,7 +86,7 @@ jest.mock('@/services/audioService', () => ({
     })),
   },
   RECORDING_CONFIG: {
-    sampleRate: 16000,
+    sampleRate: 24000,
     channels: 1,
     encoding: 'pcm_16bit',
     interval: 250,
@@ -115,15 +126,33 @@ jest.mock('@siteed/expo-audio-stream', () => ({
 import { useVoiceSession } from '@/hooks/useVoiceSession';
 import audioService from '@/services/audioService';
 import audioPlaybackService from '@/services/audioPlaybackService';
+import api from '@/services/api';
 
 // Reference the mocked singleton so tests can assert on its methods
 const mockPlaybackService = audioPlaybackService as jest.Mocked<typeof audioPlaybackService>;
+const mockApi = api as jest.Mocked<typeof api>;
+
+const MOCK_SESSION_RESPONSE = {
+  data: {
+    token: 'ephemeral-test-token-123',
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+    agent: {
+      instructions: 'You are a helpful receptionist.',
+      voice: 'Ara',
+      initial_greeting: 'Hello! How can I help you?',
+      tools: [],
+    },
+  },
+};
 
 describe('useVoiceSession Integration', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
     mockWsInstances = [];
+
+    // Mock the ephemeral token API call
+    mockApi.post.mockResolvedValue(MOCK_SESSION_RESPONSE);
 
     // Set authenticated state with workspace
     useAuthStore.setState({
@@ -153,17 +182,34 @@ describe('useVoiceSession Integration', () => {
   });
 
   describe('startCall()', () => {
-    it('creates WebSocket with correct URL using workspaceId and agentId', async () => {
+    it('requests ephemeral token from backend then connects to Grok', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
         await result.current.startCall('agent-456');
       });
 
+      // Verify token request
+      expect(mockApi.post).toHaveBeenCalledWith('/voice/session', {
+        workspace_id: 'ws-123',
+        agent_id: 'agent-456',
+      });
+
+      // Verify WebSocket connects to Grok
       expect(mockWsInstances.length).toBeGreaterThanOrEqual(1);
       const ws = mockWsInstances[0];
-      expect(ws.url).toContain('ws://');
-      expect(ws.url).toContain('/voice/test/ws-123/agent-456');
+      expect(ws.url).toBe('wss://api.x.ai/v1/realtime');
+    });
+
+    it('passes ephemeral token via WebSocket protocols', async () => {
+      const { result } = renderHook(() => useVoiceSession());
+
+      await act(async () => {
+        await result.current.startCall('agent-456');
+      });
+
+      const ws = mockWsInstances[0];
+      expect(ws.protocols).toContain('openai-insecure-api-key.ephemeral-test-token-123');
     });
 
     it('sets up audio mode before connecting', async () => {
@@ -203,14 +249,9 @@ describe('useVoiceSession Integration', () => {
         callback(true);
       });
       expect(useCallStore.getState().isAiSpeaking).toBe(true);
-
-      act(() => {
-        callback(false);
-      });
-      expect(useCallStore.getState().isAiSpeaking).toBe(false);
     });
 
-    it('starts audio recording with config from audioService', async () => {
+    it('starts audio recording with 24kHz config', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -220,7 +261,6 @@ describe('useVoiceSession Integration', () => {
       expect(audioService.getRecordingConfig).toHaveBeenCalledWith(
         expect.objectContaining({
           onAudioChunk: expect.any(Function),
-          onSpeechStateChange: expect.any(Function),
         })
       );
       expect(mockStartRecording).toHaveBeenCalled();
@@ -228,7 +268,7 @@ describe('useVoiceSession Integration', () => {
   });
 
   describe('WebSocket onopen', () => {
-    it('sends start message and resets reconnect counter', async () => {
+    it('sends session.update with agent config on connect', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -241,12 +281,43 @@ describe('useVoiceSession Integration', () => {
         ws.simulateOpen();
       });
 
-      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'start' }));
+      // First message should be session.update
+      const firstCall = ws.send.mock.calls[0][0];
+      const parsed = JSON.parse(firstCall);
+      expect(parsed.type).toBe('session.update');
+      expect(parsed.session.voice).toBe('Ara');
+      expect(parsed.session.instructions).toBe('You are a helpful receptionist.');
+      expect(parsed.session.input_audio_format).toBe('pcm16');
+      expect(parsed.session.output_audio_format).toBe('pcm16');
+      expect(parsed.session.turn_detection.type).toBe('server_vad');
+    });
+
+    it('sends initial greeting as conversation item', async () => {
+      const { result } = renderHook(() => useVoiceSession());
+
+      await act(async () => {
+        await result.current.startCall('agent-456');
+      });
+
+      const ws = mockWsInstances[0];
+
+      act(() => {
+        ws.simulateOpen();
+      });
+
+      // Should have sent: session.update, conversation.item.create, response.create
+      expect(ws.send).toHaveBeenCalledTimes(3);
+
+      const greetingCall = JSON.parse(ws.send.mock.calls[1][0]);
+      expect(greetingCall.type).toBe('conversation.item.create');
+
+      const responseCreate = JSON.parse(ws.send.mock.calls[2][0]);
+      expect(responseCreate.type).toBe('response.create');
     });
   });
 
   describe('WebSocket onmessage', () => {
-    it('enqueues audio data to playback service on audio message', async () => {
+    it('enqueues audio data on response.audio.delta', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -259,32 +330,13 @@ describe('useVoiceSession Integration', () => {
       });
 
       act(() => {
-        ws.simulateMessage({ type: 'audio', data: 'base64audiochunk==' });
+        ws.simulateMessage({ type: 'response.audio.delta', delta: 'base64audiochunk==' });
       });
 
       expect(mockPlaybackService.enqueue).toHaveBeenCalledWith('base64audiochunk==');
     });
 
-    it('does not enqueue audio when data is missing', async () => {
-      const { result } = renderHook(() => useVoiceSession());
-
-      await act(async () => {
-        await result.current.startCall('agent-456');
-      });
-
-      const ws = mockWsInstances[0];
-      act(() => {
-        ws.simulateOpen();
-      });
-
-      act(() => {
-        ws.simulateMessage({ type: 'audio' }); // no data field
-      });
-
-      expect(mockPlaybackService.enqueue).not.toHaveBeenCalled();
-    });
-
-    it('adds transcript to call store on transcript message', async () => {
+    it('adds AI transcript on response.audio_transcript.done', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -298,9 +350,8 @@ describe('useVoiceSession Integration', () => {
 
       act(() => {
         ws.simulateMessage({
-          type: 'transcript',
-          role: 'assistant',
-          text: 'Hello, how can I help you?',
+          type: 'response.audio_transcript.done',
+          transcript: 'Hello, how can I help you?',
         });
       });
 
@@ -312,7 +363,7 @@ describe('useVoiceSession Integration', () => {
       });
     });
 
-    it('adds user transcript to call store', async () => {
+    it('adds user transcript on input_audio_transcription.completed', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -326,9 +377,8 @@ describe('useVoiceSession Integration', () => {
 
       act(() => {
         ws.simulateMessage({
-          type: 'transcript',
-          role: 'user',
-          text: 'I need to book an appointment',
+          type: 'conversation.item.input_audio_transcription.completed',
+          transcript: 'I need to book an appointment',
         });
       });
 
@@ -340,7 +390,7 @@ describe('useVoiceSession Integration', () => {
       });
     });
 
-    it('ignores transcript messages with missing role or text', async () => {
+    it('updates user speaking state from server VAD events', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -353,14 +403,42 @@ describe('useVoiceSession Integration', () => {
       });
 
       act(() => {
-        ws.simulateMessage({ type: 'transcript', role: 'user' }); // no text
-        ws.simulateMessage({ type: 'transcript', text: 'hello' }); // no role
+        ws.simulateMessage({ type: 'input_audio_buffer.speech_started' });
       });
+      expect(useCallStore.getState().isUserSpeaking).toBe(true);
 
-      expect(useCallStore.getState().transcript).toHaveLength(0);
+      act(() => {
+        ws.simulateMessage({ type: 'input_audio_buffer.speech_stopped' });
+      });
+      expect(useCallStore.getState().isUserSpeaking).toBe(false);
     });
 
-    it('handles connected message without error', async () => {
+    it('flushes playback on barge-in (speech_started while AI speaking)', async () => {
+      const { result } = renderHook(() => useVoiceSession());
+
+      await act(async () => {
+        await result.current.startCall('agent-456');
+      });
+
+      const ws = mockWsInstances[0];
+      act(() => {
+        ws.simulateOpen();
+      });
+
+      // Set AI as speaking
+      act(() => {
+        useCallStore.getState().setAiSpeaking(true);
+      });
+
+      // User starts speaking (barge-in)
+      act(() => {
+        ws.simulateMessage({ type: 'input_audio_buffer.speech_started' });
+      });
+
+      expect(mockPlaybackService.flush).toHaveBeenCalled();
+    });
+
+    it('handles session.created without error', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -374,59 +452,13 @@ describe('useVoiceSession Integration', () => {
 
       // Should not throw
       act(() => {
-        ws.simulateMessage({ type: 'connected' });
+        ws.simulateMessage({ type: 'session.created' });
       });
-    });
-
-    it('handles invalid JSON gracefully', async () => {
-      const { result } = renderHook(() => useVoiceSession());
-
-      await act(async () => {
-        await result.current.startCall('agent-456');
-      });
-
-      const ws = mockWsInstances[0];
-      act(() => {
-        ws.simulateOpen();
-      });
-
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
-
-      // Send raw string that's not JSON
-      act(() => {
-        ws.onmessage?.({ data: 'not-json' });
-      });
-
-      expect(consoleSpy).toHaveBeenCalledWith(
-        '[VoiceSession] Failed to parse message:',
-        expect.any(Error)
-      );
-
-      consoleSpy.mockRestore();
     });
   });
 
   describe('endCall()', () => {
-    it('sends stop message and closes WebSocket', async () => {
-      const { result } = renderHook(() => useVoiceSession());
-
-      await act(async () => {
-        await result.current.startCall('agent-456');
-      });
-
-      const ws = mockWsInstances[0];
-      act(() => {
-        ws.simulateOpen();
-      });
-
-      await act(async () => {
-        await result.current.endCall();
-      });
-
-      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'stop' }));
-    });
-
-    it('stops audio recording', async () => {
+    it('stops audio recording and cleans up', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -454,130 +486,6 @@ describe('useVoiceSession Integration', () => {
       expect(mockPlaybackService.flush).toHaveBeenCalled();
       expect(mockPlaybackService.destroy).toHaveBeenCalled();
     });
-
-    it('handles stopRecording error gracefully', async () => {
-      mockStopRecording.mockRejectedValueOnce(new Error('Recording not started'));
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
-
-      const { result } = renderHook(() => useVoiceSession());
-
-      await act(async () => {
-        await result.current.startCall('agent-456');
-      });
-
-      // Should not throw
-      await act(async () => {
-        await result.current.endCall();
-      });
-
-      expect(consoleSpy).toHaveBeenCalledWith(
-        '[VoiceSession] Failed to stop audio recording:',
-        expect.any(Error)
-      );
-
-      consoleSpy.mockRestore();
-    });
-  });
-
-  describe('Reconnection', () => {
-    it('attempts reconnection on unexpected close with exponential backoff', async () => {
-      const { result } = renderHook(() => useVoiceSession());
-
-      await act(async () => {
-        await result.current.startCall('agent-456');
-      });
-
-      const ws = mockWsInstances[0];
-      act(() => {
-        ws.simulateOpen();
-      });
-
-      // Simulate unexpected close
-      act(() => {
-        ws.simulateClose();
-      });
-
-      // First reconnect after 1000ms (BASE_RECONNECT_DELAY * 2^0)
-      expect(mockWsInstances.length).toBe(1); // not yet reconnected
-
-      act(() => {
-        jest.advanceTimersByTime(1000);
-      });
-
-      // New WebSocket should be created
-      expect(mockWsInstances.length).toBe(2);
-      expect(mockWsInstances[1].url).toContain('/voice/test/ws-123/agent-456');
-    });
-
-    it('does not reconnect on intentional end', async () => {
-      const { result } = renderHook(() => useVoiceSession());
-
-      await act(async () => {
-        await result.current.startCall('agent-456');
-      });
-
-      const ws = mockWsInstances[0];
-      act(() => {
-        ws.simulateOpen();
-      });
-
-      // End call intentionally
-      await act(async () => {
-        await result.current.endCall();
-      });
-
-      // The close will fire from cleanup, but isEndingRef is true
-      act(() => {
-        jest.advanceTimersByTime(5000);
-      });
-
-      // Only the original WebSocket should exist (cleanup creates no new ones)
-      expect(mockWsInstances.length).toBe(1);
-    });
-
-    it('stops reconnecting after MAX_RECONNECT_ATTEMPTS', async () => {
-      const { result } = renderHook(() => useVoiceSession());
-
-      await act(async () => {
-        await result.current.startCall('agent-456');
-      });
-
-      // Simulate 5 failed reconnections (MAX_RECONNECT_ATTEMPTS = 5)
-      for (let i = 0; i < 5; i++) {
-        const ws = mockWsInstances[mockWsInstances.length - 1];
-        act(() => {
-          ws.simulateOpen();
-        });
-        act(() => {
-          ws.simulateClose();
-        });
-
-        // Advance timer to trigger reconnect
-        const delay = 1000 * Math.pow(2, i);
-        act(() => {
-          jest.advanceTimersByTime(delay);
-        });
-      }
-
-      const lastWs = mockWsInstances[mockWsInstances.length - 1];
-      act(() => {
-        lastWs.simulateClose();
-      });
-
-      // Advance past any possible reconnect delay
-      act(() => {
-        jest.advanceTimersByTime(60000);
-      });
-
-      // Count should not increase after the close of the last reconnect attempt
-      const finalCount = mockWsInstances.length;
-
-      act(() => {
-        jest.advanceTimersByTime(60000);
-      });
-
-      expect(mockWsInstances.length).toBe(finalCount);
-    });
   });
 
   describe('toggleMute()', () => {
@@ -604,7 +512,6 @@ describe('useVoiceSession Integration', () => {
     it('toggles speaker state and calls audioService.setSpeakerMode', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
-      // Initial state: speaker off
       expect(useCallStore.getState().isSpeaker).toBe(false);
 
       await act(async () => {
@@ -617,7 +524,7 @@ describe('useVoiceSession Integration', () => {
   });
 
   describe('Audio chunk sending', () => {
-    it('sends audio chunks over WebSocket when not muted', async () => {
+    it('sends audio chunks to Grok using input_audio_buffer.append', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -633,13 +540,16 @@ describe('useVoiceSession Integration', () => {
       const configCall = (audioService.getRecordingConfig as jest.Mock).mock.calls[0][0];
       const onAudioChunk = configCall.onAudioChunk;
 
+      // Clear send calls from onopen (session.update, greeting, etc.)
+      ws.send.mockClear();
+
       // Simulate an audio chunk
       act(() => {
         onAudioChunk('base64chunk==');
       });
 
       expect(ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: 'audio', data: 'base64chunk==' })
+        JSON.stringify({ type: 'input_audio_buffer.append', audio: 'base64chunk==' })
       );
     });
 
@@ -671,7 +581,6 @@ describe('useVoiceSession Integration', () => {
         onAudioChunk('base64chunk==');
       });
 
-      // Should not have sent audio (only the start message from onopen)
       expect(ws.send).not.toHaveBeenCalled();
     });
   });

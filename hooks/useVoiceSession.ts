@@ -1,18 +1,26 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useAudioRecorder } from '@siteed/expo-audio-stream';
-import { WS_BASE_URL } from '../constants/api';
+import { GROK_REALTIME_URL } from '../constants/api';
 import { useAuthStore } from '../stores/authStore';
 import { useCallStore } from '../stores/callStore';
 import audioService from '../services/audioService';
 import audioPlaybackService from '../services/audioPlaybackService';
+import api from '../services/api';
 import logger from '../lib/logger';
 
-const MAX_RECONNECT_ATTEMPTS = 5;
-const BASE_RECONNECT_DELAY = 1000;
+const MAX_RECONNECT_ATTEMPTS = 3;
+const BASE_RECONNECT_DELAY = 2000;
 
-// VAD debounce timers (ms)
-const SPEECH_START_DEBOUNCE = 100;
-const SPEECH_END_DEBOUNCE = 500;
+interface VoiceSessionResponse {
+  token: string;
+  expires_at: number;
+  agent: {
+    instructions: string;
+    voice: string;
+    initial_greeting: string | null;
+    tools: unknown[];
+  };
+}
 
 export function useVoiceSession() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -20,6 +28,7 @@ export function useVoiceSession() {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEndingRef = useRef(false);
   const agentIdRef = useRef<string | null>(null);
+  const sessionTokenRef = useRef<string | null>(null);
 
   // Log hook mount
   useEffect(() => {
@@ -28,11 +37,6 @@ export function useVoiceSession() {
       logger.lifecycle('useVoiceSession', 'unmount');
     };
   }, []);
-
-  // VAD debounce refs
-  const speechStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const speechEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const userSpeakingRef = useRef(false);
 
   const workspaceId = useAuthStore((s) => s.workspaceId);
   const { addTranscript } = useCallStore();
@@ -48,14 +52,6 @@ export function useVoiceSession() {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
-    if (speechStartTimerRef.current) {
-      clearTimeout(speechStartTimerRef.current);
-      speechStartTimerRef.current = null;
-    }
-    if (speechEndTimerRef.current) {
-      clearTimeout(speechEndTimerRef.current);
-      speechEndTimerRef.current = null;
-    }
     if (wsRef.current) {
       wsRef.current.onopen = null;
       wsRef.current.onmessage = null;
@@ -68,136 +64,168 @@ export function useVoiceSession() {
       wsRef.current = null;
     }
     reconnectAttemptRef.current = 0;
-    userSpeakingRef.current = false;
+    sessionTokenRef.current = null;
   }, []);
 
-  const connectWebSocket = useCallback(
-    (agentId: string) => {
-      if (!workspaceId) {
-        logger.warn('Cannot connect: no workspaceId', {}, 'VoiceSession');
-        return;
-      }
-
-      logger.lifecycle('VoiceSession', 'connectWebSocket:start', { workspaceId, agentId });
-
+  /**
+   * Connect directly to Grok's Realtime WebSocket using an ephemeral token.
+   */
+  const connectToGrok = useCallback(
+    (token: string, agentConfig: VoiceSessionResponse['agent']) => {
       cleanup();
       isEndingRef.current = false;
 
-      const url = `${WS_BASE_URL}/voice/test/${workspaceId}/${agentId}`;
-      const ws = new WebSocket(url);
+      const url = GROK_REALTIME_URL;
+
+      // Grok uses sec-websocket-protocol for auth
+      const ws = new WebSocket(url, ['realtime', `openai-insecure-api-key.${token}`]);
       wsRef.current = ws;
 
-      logger.websocket('Connecting', { url });
+      logger.websocket('Connecting to Grok Realtime', { url });
 
       ws.onopen = () => {
-        logger.websocket('Connected', { url, agentId });
+        logger.websocket('Connected to Grok Realtime', { url });
         reconnectAttemptRef.current = 0;
-        ws.send(JSON.stringify({ type: 'start' }));
+
+        // Send session.update with agent config
+        const sessionUpdate = {
+          type: 'session.update',
+          session: {
+            modalities: ['text', 'audio'],
+            instructions: agentConfig.instructions,
+            voice: agentConfig.voice,
+            input_audio_format: 'pcm16',
+            output_audio_format: 'pcm16',
+            input_audio_transcription: {
+              model: 'grok-2-public',
+            },
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 500,
+            },
+          },
+        };
+        ws.send(JSON.stringify(sessionUpdate));
+        logger.info('Sent session.update to Grok', {}, 'VoiceSession');
+
+        // If agent has an initial greeting, send it as a conversation item
+        if (agentConfig.initial_greeting) {
+          const greetingMessage = {
+            type: 'conversation.item.create',
+            item: {
+              type: 'message',
+              role: 'user',
+              content: [
+                {
+                  type: 'input_text',
+                  text: `You are starting a new call. Greet the caller with: "${agentConfig.initial_greeting}"`,
+                },
+              ],
+            },
+          };
+          ws.send(JSON.stringify(greetingMessage));
+          ws.send(JSON.stringify({ type: 'response.create' }));
+        }
       };
 
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
 
-          logger.websocket('Message received', { type: msg.type });
-
           switch (msg.type) {
-            case 'connected':
-              logger.info('Connected to voice server', {}, 'VoiceSession');
+            case 'session.created':
+            case 'session.updated':
+              logger.info(`Grok ${msg.type}`, {}, 'VoiceSession');
               break;
-            case 'audio':
-              if (msg.data) {
-                audioPlaybackService.enqueue(msg.data);
+
+            case 'response.audio.delta':
+              // Incoming audio from Grok — base64 PCM16 24kHz
+              if (msg.delta) {
+                audioPlaybackService.enqueue(msg.delta);
               }
               break;
-            case 'transcript':
-              if (msg.role && msg.text) {
-                addTranscript({ role: msg.role, text: msg.text });
+
+            case 'response.audio_transcript.delta':
+              // Partial transcript of AI speech (streaming)
+              break;
+
+            case 'response.audio_transcript.done':
+              // Complete AI transcript
+              if (msg.transcript) {
+                addTranscript({ role: 'assistant', text: msg.transcript });
               }
               break;
+
+            case 'conversation.item.input_audio_transcription.completed':
+              // User's speech transcribed
+              if (msg.transcript) {
+                addTranscript({ role: 'user', text: msg.transcript });
+              }
+              break;
+
+            case 'input_audio_buffer.speech_started':
+              // Grok's server VAD detected speech start
+              useCallStore.getState().setUserSpeaking(true);
+              // Barge-in: if AI is speaking, interrupt it
+              if (useCallStore.getState().isAiSpeaking) {
+                audioPlaybackService.flush();
+              }
+              break;
+
+            case 'input_audio_buffer.speech_stopped':
+              // Grok's server VAD detected speech end
+              useCallStore.getState().setUserSpeaking(false);
+              break;
+
+            case 'response.audio.done':
+              // AI finished sending audio for this response
+              break;
+
+            case 'response.done':
+              // Full response complete
+              break;
+
             case 'error':
-              logger.error('Server error during voice session', null, { message: msg.message }, 'VoiceSession');
+              logger.error('Grok error', null, { error: msg.error }, 'VoiceSession');
               break;
-            case 'stopped':
-              logger.info('Server confirmed stop', {}, 'VoiceSession');
-              break;
+
             default:
-              logger.debug('Unknown message type', { messageType: msg.type }, 'VoiceSession');
+              // Other Grok events (rate_limits.updated, etc.)
+              break;
           }
         } catch (e) {
-          logger.error('Failed to parse WebSocket message', e, { data: event.data }, 'VoiceSession');
+          logger.error('Failed to parse Grok message', e, { data: event.data }, 'VoiceSession');
         }
       };
 
       ws.onerror = (error) => {
-        logger.error('WebSocket error', error, { url }, 'VoiceSession');
+        logger.error('Grok WebSocket error', error, { url }, 'VoiceSession');
       };
 
       ws.onclose = () => {
-        logger.websocket('Disconnected', { url });
+        logger.websocket('Grok disconnected', { url });
+        useCallStore.getState().setAiSpeaking(false);
+        useCallStore.getState().setUserSpeaking(false);
+
         if (!isEndingRef.current && reconnectAttemptRef.current < MAX_RECONNECT_ATTEMPTS) {
           const delay = BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptRef.current);
           reconnectAttemptRef.current += 1;
           logger.info(`Reconnecting in ${delay}ms`, { attempt: reconnectAttemptRef.current }, 'VoiceSession');
           reconnectTimeoutRef.current = setTimeout(() => {
-            connectWebSocket(agentId);
+            // Re-use the saved token if it hasn't expired
+            if (sessionTokenRef.current) {
+              connectToGrok(sessionTokenRef.current, agentConfig);
+            }
           }, delay);
         } else if (reconnectAttemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
           logger.error('Max reconnect attempts reached', null, { attempts: reconnectAttemptRef.current }, 'VoiceSession');
         }
       };
     },
-    [workspaceId, cleanup, addTranscript]
+    [cleanup, addTranscript]
   );
-
-  /**
-   * VAD speech state change handler with debouncing.
-   * - Speech start: 100ms debounce (responsive)
-   * - Speech end: 500ms debounce (avoid flicker)
-   * - Barge-in: flush AI playback when user starts speaking
-   */
-  const handleSpeechStateChange = useCallback((isSpeaking: boolean) => {
-    if (isSpeaking) {
-      // Clear any pending speech-end timer
-      if (speechEndTimerRef.current) {
-        clearTimeout(speechEndTimerRef.current);
-        speechEndTimerRef.current = null;
-      }
-
-      if (!userSpeakingRef.current) {
-        // Debounce speech start
-        if (!speechStartTimerRef.current) {
-          speechStartTimerRef.current = setTimeout(() => {
-            speechStartTimerRef.current = null;
-            userSpeakingRef.current = true;
-            useCallStore.getState().setUserSpeaking(true);
-
-            // Barge-in: if AI is speaking, interrupt it
-            if (useCallStore.getState().isAiSpeaking) {
-              audioPlaybackService.flush();
-            }
-          }, SPEECH_START_DEBOUNCE);
-        }
-      }
-    } else {
-      // Clear any pending speech-start timer
-      if (speechStartTimerRef.current) {
-        clearTimeout(speechStartTimerRef.current);
-        speechStartTimerRef.current = null;
-      }
-
-      if (userSpeakingRef.current) {
-        // Debounce speech end
-        if (!speechEndTimerRef.current) {
-          speechEndTimerRef.current = setTimeout(() => {
-            speechEndTimerRef.current = null;
-            userSpeakingRef.current = false;
-            useCallStore.getState().setUserSpeaking(false);
-          }, SPEECH_END_DEBOUNCE);
-        }
-      }
-    }
-  }, []);
 
   const startCall = useCallback(
     async (agentId: string) => {
@@ -219,17 +247,35 @@ export function useVoiceSession() {
         logger.error('Failed to setup audio mode', e, {}, 'VoiceSession');
       }
 
-      connectWebSocket(agentId);
+      // Step 1: Get ephemeral token from our backend
+      let sessionData: VoiceSessionResponse;
+      try {
+        const response = await api.post('/voice/session', {
+          workspace_id: workspaceId,
+          agent_id: agentId,
+        });
+        sessionData = response.data;
+        sessionTokenRef.current = sessionData.token;
+        logger.info('Got ephemeral token', { expires_at: sessionData.expires_at }, 'VoiceSession');
+      } catch (e) {
+        logger.error('Failed to get voice session token', e, {}, 'VoiceSession');
+        throw e;
+      }
 
-      // Start audio recording with VAD and pipe chunks to WebSocket
+      // Step 2: Connect directly to Grok's WebSocket
+      connectToGrok(sessionData.token, sessionData.agent);
+
+      // Step 3: Start audio recording and pipe chunks to Grok
       const config = audioService.getRecordingConfig({
         onAudioChunk: (base64: string) => {
           const { isMuted } = useCallStore.getState();
           if (!isMuted && wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: 'audio', data: base64 }));
+            wsRef.current.send(JSON.stringify({
+              type: 'input_audio_buffer.append',
+              audio: base64,
+            }));
           }
         },
-        onSpeechStateChange: handleSpeechStateChange,
       });
 
       try {
@@ -239,7 +285,7 @@ export function useVoiceSession() {
         logger.error('Failed to start audio recording', e, {}, 'VoiceSession');
       }
     },
-    [connectWebSocket, startAudioRecording, handleSpeechStateChange]
+    [workspaceId, connectToGrok, startAudioRecording]
   );
 
   const endCall = useCallback(async () => {
@@ -253,10 +299,6 @@ export function useVoiceSession() {
       await stopAudioRecording();
     } catch (e) {
       logger.error('Failed to stop audio recording', e, {}, 'VoiceSession');
-    }
-
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'stop' }));
     }
 
     cleanup();

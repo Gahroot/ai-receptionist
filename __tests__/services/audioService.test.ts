@@ -5,8 +5,8 @@ import { Platform } from 'react-native';
 const mockSetAudioMode = Audio.setAudioModeAsync as jest.Mock;
 
 describe('RECORDING_CONFIG', () => {
-  test('has correct sampleRate', () => {
-    expect(RECORDING_CONFIG.sampleRate).toBe(16000);
+  test('has correct sampleRate (24kHz for Grok)', () => {
+    expect(RECORDING_CONFIG.sampleRate).toBe(24000);
   });
 
   test('has correct channels', () => {
@@ -23,7 +23,7 @@ describe('RECORDING_CONFIG', () => {
 
   test('exports the complete config object', () => {
     expect(RECORDING_CONFIG).toEqual({
-      sampleRate: 16000,
+      sampleRate: 24000,
       channels: 1,
       encoding: 'pcm_16bit',
       interval: 250,
@@ -107,11 +107,11 @@ describe('audioService.getRecordingConfig', () => {
     jest.clearAllMocks();
   });
 
-  test('returns config with correct audio parameters', () => {
+  test('returns config with correct audio parameters (24kHz for Grok)', () => {
     const onAudioChunk = jest.fn();
     const config = audioService.getRecordingConfig({ onAudioChunk });
 
-    expect(config.sampleRate).toBe(16000);
+    expect(config.sampleRate).toBe(24000);
     expect(config.channels).toBe(1);
     expect(config.encoding).toBe('pcm_16bit');
     expect(config.interval).toBe(250);
@@ -162,8 +162,7 @@ describe('audioService.getRecordingConfig', () => {
       position: number;
     }) => Promise<void>;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await onAudioStream({ data: null as any, position: 0 });
+    await onAudioStream({ data: null as unknown as string, position: 0 });
 
     expect(onAudioChunk).not.toHaveBeenCalled();
   });
@@ -172,7 +171,7 @@ describe('audioService.getRecordingConfig', () => {
     const onAudioChunk = jest.fn();
     const config = audioService.getRecordingConfig(onAudioChunk);
 
-    expect(config.sampleRate).toBe(16000);
+    expect(config.sampleRate).toBe(24000);
     expect(config.onAudioStream).toBeDefined();
   });
 
@@ -190,115 +189,13 @@ describe('audioService.getRecordingConfig', () => {
     expect(onAudioChunk).toHaveBeenCalledWith('testdata');
   });
 
-  test('does not enable VAD processing when no onSpeechStateChange callback', () => {
+  test('does not include VAD processing (Grok handles server-side VAD)', () => {
     const onAudioChunk = jest.fn();
     const config = audioService.getRecordingConfig({ onAudioChunk });
 
     expect(config.enableProcessing).toBeUndefined();
     expect(config.features).toBeUndefined();
     expect(config.onAudioAnalysis).toBeUndefined();
-  });
-
-  test('enables VAD processing when onSpeechStateChange is provided', () => {
-    const onAudioChunk = jest.fn();
-    const onSpeechStateChange = jest.fn();
-    const config = audioService.getRecordingConfig({
-      onAudioChunk,
-      onSpeechStateChange,
-    });
-
-    expect(config.enableProcessing).toBe(true);
-    expect(config.features).toEqual({ energy: true, rms: true });
-    expect(config.onAudioAnalysis).toBeDefined();
-    expect(typeof config.onAudioAnalysis).toBe('function');
-  });
-
-  test('onAudioAnalysis calls onSpeechStateChange with true when speech detected (silent=false)', () => {
-    const onAudioChunk = jest.fn();
-    const onSpeechStateChange = jest.fn();
-    const config = audioService.getRecordingConfig({
-      onAudioChunk,
-      onSpeechStateChange,
-    });
-
-    const onAudioAnalysis = config.onAudioAnalysis as (analysis: {
-      dataPoints?: Array<{ silent?: boolean }>;
-    }) => void;
-
-    onAudioAnalysis({ dataPoints: [{ silent: false }] });
-
-    expect(onSpeechStateChange).toHaveBeenCalledWith(true);
-  });
-
-  test('onAudioAnalysis calls onSpeechStateChange with false when silence detected (silent=true)', () => {
-    const onAudioChunk = jest.fn();
-    const onSpeechStateChange = jest.fn();
-    const config = audioService.getRecordingConfig({
-      onAudioChunk,
-      onSpeechStateChange,
-    });
-
-    const onAudioAnalysis = config.onAudioAnalysis as (analysis: {
-      dataPoints?: Array<{ silent?: boolean }>;
-    }) => void;
-
-    onAudioAnalysis({ dataPoints: [{ silent: true }] });
-
-    expect(onSpeechStateChange).toHaveBeenCalledWith(false);
-  });
-
-  test('onAudioAnalysis uses the last data point in the array', () => {
-    const onAudioChunk = jest.fn();
-    const onSpeechStateChange = jest.fn();
-    const config = audioService.getRecordingConfig({
-      onAudioChunk,
-      onSpeechStateChange,
-    });
-
-    const onAudioAnalysis = config.onAudioAnalysis as (analysis: {
-      dataPoints?: Array<{ silent?: boolean }>;
-    }) => void;
-
-    // Multiple data points: first is speaking, last is silent
-    onAudioAnalysis({
-      dataPoints: [{ silent: false }, { silent: false }, { silent: true }],
-    });
-
-    expect(onSpeechStateChange).toHaveBeenCalledWith(false);
-  });
-
-  test('onAudioAnalysis does nothing when dataPoints is empty', () => {
-    const onAudioChunk = jest.fn();
-    const onSpeechStateChange = jest.fn();
-    const config = audioService.getRecordingConfig({
-      onAudioChunk,
-      onSpeechStateChange,
-    });
-
-    const onAudioAnalysis = config.onAudioAnalysis as (analysis: {
-      dataPoints?: Array<{ silent?: boolean }>;
-    }) => void;
-
-    onAudioAnalysis({ dataPoints: [] });
-
-    expect(onSpeechStateChange).not.toHaveBeenCalled();
-  });
-
-  test('onAudioAnalysis does nothing when dataPoints is undefined', () => {
-    const onAudioChunk = jest.fn();
-    const onSpeechStateChange = jest.fn();
-    const config = audioService.getRecordingConfig({
-      onAudioChunk,
-      onSpeechStateChange,
-    });
-
-    const onAudioAnalysis = config.onAudioAnalysis as (analysis: {
-      dataPoints?: Array<{ silent?: boolean }>;
-    }) => void;
-
-    onAudioAnalysis({});
-
-    expect(onSpeechStateChange).not.toHaveBeenCalled();
   });
 
   test('includes iOS audio session config on iOS', () => {

@@ -8,10 +8,13 @@ import { Platform } from 'react-native';
  * Note: The actual recording uses the useAudioRecorder hook from
  * @siteed/expo-audio-stream (must be called from a React component).
  * This service provides the audio mode setup and recording config.
+ *
+ * Grok Realtime API uses 24kHz PCM16 natively — no sample rate conversion needed.
+ * Server-side VAD is handled by Grok, so client-side VAD is removed.
  */
 
 export const RECORDING_CONFIG = {
-  sampleRate: 16000 as const,
+  sampleRate: 24000 as const,
   channels: 1 as const,
   encoding: 'pcm_16bit' as const,
   interval: 250,
@@ -19,7 +22,6 @@ export const RECORDING_CONFIG = {
 
 interface RecordingCallbacks {
   onAudioChunk: (base64: string) => void;
-  onSpeechStateChange?: (isSpeaking: boolean) => void;
 }
 
 const audioService = {
@@ -53,14 +55,11 @@ const audioService = {
 
   /**
    * Get the recording configuration for useAudioRecorder.startRecording().
-   * Pass callbacks for audio chunks and optional speech state changes (VAD).
+   * Grok handles VAD server-side, so no client-side speech detection needed.
    */
   getRecordingConfig: (callbacks: RecordingCallbacks | ((base64: string) => void)) => {
-    // Support both legacy function signature and new object signature
-    const { onAudioChunk, onSpeechStateChange } =
-      typeof callbacks === 'function'
-        ? { onAudioChunk: callbacks, onSpeechStateChange: undefined }
-        : callbacks;
+    const onAudioChunk =
+      typeof callbacks === 'function' ? callbacks : callbacks.onAudioChunk;
 
     const config: Record<string, unknown> = {
       sampleRate: RECORDING_CONFIG.sampleRate,
@@ -73,23 +72,6 @@ const audioService = {
         }
       },
     };
-
-    // Enable audio analysis for VAD if callback provided
-    if (onSpeechStateChange) {
-      config.enableProcessing = true;
-      config.features = { energy: true, rms: true };
-      config.onAudioAnalysis = (analysis: {
-        dataPoints?: Array<{ silent?: boolean }>;
-      }) => {
-        // The library provides a `silent` boolean on each data point
-        const points = analysis.dataPoints;
-        if (points && points.length > 0) {
-          const lastPoint = points[points.length - 1];
-          // silent=true means no speech detected
-          onSpeechStateChange(!lastPoint.silent);
-        }
-      };
-    }
 
     // iOS audio session for full-duplex (simultaneous record + playback)
     if (Platform.OS === 'ios') {
