@@ -6,9 +6,13 @@ export function useAudioPermissions() {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
 
   useEffect(() => {
-    ExpoAudioStreamModule.getPermissionsAsync().then((result: { granted: boolean }) => {
-      setHasPermission(result.granted);
-    });
+    ExpoAudioStreamModule.getPermissionsAsync()
+      .then((result: { granted: boolean }) => {
+        setHasPermission(result.granted);
+      })
+      .catch(() => {
+        // Permission check failed — leave hasPermission as null
+      });
   }, []);
 
   const requestPermission = useCallback(async (): Promise<boolean> => {

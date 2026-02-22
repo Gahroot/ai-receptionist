@@ -4,15 +4,17 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import api from './api';
 
-// Configure foreground notification display at module level
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+// Configure foreground notification display at module level (native only)
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    }),
+  });
+}
 
 export async function getExpoPushToken(): Promise<string> {
   if (!Device.isDevice) {

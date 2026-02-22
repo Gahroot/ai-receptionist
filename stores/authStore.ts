@@ -3,6 +3,8 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import api from '../services/api';
+import { unregisterToken } from '../services/notificationService';
+import { useNotificationStore } from './notificationStore';
 import type { User } from '../lib/types';
 
 interface AuthState {
@@ -68,8 +70,6 @@ export const useAuthStore = create<AuthState>()(
       logout: async () => {
         // Unregister push token before clearing auth
         try {
-          const { useNotificationStore } = await import('./notificationStore');
-          const { unregisterToken } = await import('../services/notificationService');
           const token = useNotificationStore.getState().expoPushToken;
           if (token) {
             await unregisterToken(token);

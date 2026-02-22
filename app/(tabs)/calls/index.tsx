@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { FlatList, ActivityIndicator } from 'react-native';
 import { YStack, XStack, Text, Button, Input } from 'tamagui';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,21 +8,24 @@ import {
   PhoneOutgoing,
   PhoneMissed,
   Bot,
+  Voicemail,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { formatDistanceToNow } from 'date-fns';
 import { colors } from '../../../constants/theme';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/authStore';
+import { useVoicemailStore } from '../../../stores/voicemailStore';
 import type { CallResponse, PaginatedCalls } from '../../../lib/types';
 
-type FilterType = 'all' | 'inbound' | 'outbound' | 'missed';
+type FilterType = 'all' | 'inbound' | 'outbound' | 'missed' | 'voicemail';
 
 const FILTERS: { label: string; value: FilterType }[] = [
   { label: 'All', value: 'all' },
   { label: 'Inbound', value: 'inbound' },
   { label: 'Outbound', value: 'outbound' },
   { label: 'Missed', value: 'missed' },
+  { label: 'Voicemail', value: 'voicemail' },
 ];
 
 function formatDuration(seconds: number | null): string {
@@ -40,6 +43,9 @@ function getInitials(name: string | null): string {
 }
 
 function DirectionIcon({ call }: { call: CallResponse }) {
+  if (call.is_voicemail) {
+    return <Voicemail size={16} color={colors.secondary} />;
+  }
   if (call.status === 'no_answer') {
     return <PhoneMissed size={16} color={colors.error} />;
   }
@@ -52,6 +58,8 @@ function DirectionIcon({ call }: { call: CallResponse }) {
 export default function CallsScreen() {
   const router = useRouter();
   const workspaceId = useAuthStore((s) => s.workspaceId);
+  const unreadCount = useVoicemailStore((s) => s.unreadCount);
+  const fetchUnreadCount = useVoicemailStore((s) => s.fetchUnreadCount);
 
   const [calls, setCalls] = useState<CallResponse[]>([]);
   const [page, setPage] = useState(1);
@@ -62,6 +70,13 @@ export default function CallsScreen() {
   const [search, setSearch] = useState('');
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [initialLoaded, setInitialLoaded] = useState(false);
+
+  // Fetch voicemail unread count on mount
+  useEffect(() => {
+    if (workspaceId) {
+      fetchUnreadCount(workspaceId);
+    }
+  }, [workspaceId, fetchUnreadCount]);
 
   const fetchCalls = useCallback(
     async (pageNum: number, isRefresh = false) => {
@@ -74,7 +89,7 @@ export default function CallsScreen() {
       }
 
       try {
-        const params: Record<string, string | number> = {
+        const params: Record<string, string | number | boolean> = {
           page: pageNum,
           page_size: 20,
         };
@@ -83,6 +98,9 @@ export default function CallsScreen() {
         }
         if (filter === 'missed') {
           params.status = 'no_answer';
+        }
+        if (filter === 'voicemail') {
+          params.is_voicemail = true;
         }
         if (search.trim()) {
           params.search = search.trim();
@@ -122,8 +140,11 @@ export default function CallsScreen() {
   }
 
   const handleRefresh = useCallback(() => {
+    if (workspaceId) {
+      fetchUnreadCount(workspaceId);
+    }
     fetchCalls(1, true);
-  }, [fetchCalls]);
+  }, [fetchCalls, workspaceId, fetchUnreadCount]);
 
   const handleLoadMore = useCallback(() => {
     if (!loading && page < totalPages) {
@@ -150,6 +171,7 @@ export default function CallsScreen() {
     ({ item }: { item: CallResponse }) => {
       const displayName = item.contact_name || item.from_number || item.to_number || 'Unknown';
       const timeAgo = formatDistanceToNow(new Date(item.created_at), { addSuffix: true });
+      const isUnreadVoicemail = item.is_voicemail && !item.is_read;
 
       return (
         <XStack
@@ -165,21 +187,34 @@ export default function CallsScreen() {
             width={44}
             height={44}
             borderRadius={22}
-            backgroundColor={colors.primaryLight}
+            backgroundColor={item.is_voicemail ? colors.secondaryLight : colors.primaryLight}
             alignItems="center"
             justifyContent="center"
           >
-            <Text fontSize={16} fontWeight="600" color={colors.primary}>
-              {getInitials(item.contact_name || displayName)}
-            </Text>
+            {item.is_voicemail ? (
+              <Voicemail size={20} color={colors.secondary} />
+            ) : (
+              <Text fontSize={16} fontWeight="600" color={colors.primary}>
+                {getInitials(item.contact_name || displayName)}
+              </Text>
+            )}
           </YStack>
 
           {/* Info */}
           <YStack flex={1} gap="$1">
             <XStack alignItems="center" gap="$2">
+              {/* Unread blue dot */}
+              {isUnreadVoicemail && (
+                <YStack
+                  width={6}
+                  height={6}
+                  borderRadius={3}
+                  backgroundColor={colors.primary}
+                />
+              )}
               <Text
                 fontSize={15}
-                fontWeight="600"
+                fontWeight={isUnreadVoicemail ? '700' : '600'}
                 color={colors.textPrimary}
                 numberOfLines={1}
                 flex={1}
@@ -188,7 +223,7 @@ export default function CallsScreen() {
               </Text>
               {item.is_ai && (
                 <XStack
-                  backgroundColor={colors.secondaryLight || '#F0EBFF'}
+                  backgroundColor={colors.secondaryLight}
                   paddingHorizontal="$2"
                   paddingVertical="$0.5"
                   borderRadius="$2"
@@ -208,6 +243,16 @@ export default function CallsScreen() {
                 {timeAgo}
               </Text>
             </XStack>
+            {/* Voicemail transcription preview */}
+            {item.is_voicemail && item.voicemail_transcription && (
+              <Text
+                fontSize={12}
+                color={colors.textTertiary}
+                numberOfLines={1}
+              >
+                {item.voicemail_transcription}
+              </Text>
+            )}
           </YStack>
 
           {/* Duration */}
@@ -257,20 +302,42 @@ export default function CallsScreen() {
           <XStack gap="$2">
             {FILTERS.map((f) => {
               const isActive = filter === f.value;
+              const isVoicemail = f.value === 'voicemail';
               return (
-                <Button
-                  key={f.value}
-                  size="$2"
-                  backgroundColor={isActive ? colors.primary : colors.surfaceSecondary}
-                  color={isActive ? '#FFFFFF' : colors.textSecondary}
-                  borderRadius="$6"
-                  pressStyle={{
-                    backgroundColor: isActive ? colors.primaryDark : colors.border,
-                  }}
-                  onPress={() => handleFilterChange(f.value)}
-                >
-                  {f.label}
-                </Button>
+                <XStack key={f.value} position="relative">
+                  <Button
+                    size="$2"
+                    backgroundColor={isActive ? colors.primary : colors.surfaceSecondary}
+                    color={isActive ? '#FFFFFF' : colors.textSecondary}
+                    borderRadius="$6"
+                    pressStyle={{
+                      backgroundColor: isActive ? colors.primaryDark : colors.border,
+                    }}
+                    onPress={() => handleFilterChange(f.value)}
+                  >
+                    {f.label}
+                  </Button>
+                  {/* Unread badge on voicemail chip */}
+                  {isVoicemail && unreadCount > 0 && (
+                    <YStack
+                      position="absolute"
+                      top={-4}
+                      right={-4}
+                      minWidth={16}
+                      height={16}
+                      borderRadius={8}
+                      backgroundColor={colors.error}
+                      alignItems="center"
+                      justifyContent="center"
+                      paddingHorizontal="$1"
+                      zIndex={1}
+                    >
+                      <Text fontSize={9} fontWeight="700" color="#FFFFFF">
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </Text>
+                    </YStack>
+                  )}
+                </XStack>
               );
             })}
           </XStack>
@@ -293,7 +360,7 @@ export default function CallsScreen() {
             ListEmptyComponent={
               <YStack flex={1} alignItems="center" justifyContent="center" paddingTop="$10">
                 <Text fontSize={15} color={colors.textTertiary}>
-                  No calls found
+                  {filter === 'voicemail' ? 'No voicemails found' : 'No calls found'}
                 </Text>
               </YStack>
             }

@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../stores/authStore';
 import { useNotificationStore } from '../stores/notificationStore';
+import { useVoicemailStore } from '../stores/voicemailStore';
 import {
   getExpoPushToken,
   registerToken,
@@ -14,11 +15,13 @@ import {
 export function useNotifications() {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const workspaceId = useAuthStore((s) => s.workspaceId);
   const { setToken, setRegistered } = useNotificationStore();
   const hasRegistered = useRef(false);
 
-  // Register for push notifications when authenticated
+  // Register for push notifications when authenticated (native only)
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     if (!isAuthenticated || hasRegistered.current) return;
 
     let cancelled = false;
@@ -44,13 +47,20 @@ export function useNotifications() {
     };
   }, [isAuthenticated]);
 
-  // Notification listeners (foreground + tap)
+  // Notification listeners (foreground + tap, native only)
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     if (!isAuthenticated) return;
 
     // Foreground notification received
     const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
       console.log('Notification received:', notification.request.content.title);
+
+      // Refresh voicemail unread count on voicemail push
+      const data = notification.request.content.data;
+      if (data?.type === 'voicemail' && workspaceId) {
+        useVoicemailStore.getState().fetchUnreadCount(workspaceId);
+      }
     });
 
     // User tapped notification -> deep link
@@ -65,10 +75,11 @@ export function useNotifications() {
       receivedSub.remove();
       responseSub.remove();
     };
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, router, workspaceId]);
 
-  // Handle killed-state launch (user tapped notification while app was closed)
+  // Handle killed-state launch (native only)
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     if (!isAuthenticated) return;
 
     async function handleInitialNotification() {
@@ -85,8 +96,9 @@ export function useNotifications() {
     handleInitialNotification();
   }, [isAuthenticated]);
 
-  // Clear badge when app comes to foreground
+  // Clear badge when app comes to foreground (native only)
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     if (!isAuthenticated) return;
 
     const subscription = AppState.addEventListener('change', (state) => {

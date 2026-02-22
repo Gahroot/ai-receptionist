@@ -1,8 +1,21 @@
+import { useEffect } from 'react';
 import { Tabs } from 'expo-router';
 import { Home, Phone, MessageCircle, Users, Settings } from 'lucide-react-native';
 import { colors } from '../../constants/theme';
+import { useAuthStore } from '../../stores/authStore';
+import { useVoicemailStore } from '../../stores/voicemailStore';
 
 export default function TabLayout() {
+  const workspaceId = useAuthStore((s) => s.workspaceId);
+  const unreadCount = useVoicemailStore((s) => s.unreadCount);
+  const fetchUnreadCount = useVoicemailStore((s) => s.fetchUnreadCount);
+
+  useEffect(() => {
+    if (workspaceId) {
+      fetchUnreadCount(workspaceId);
+    }
+  }, [workspaceId, fetchUnreadCount]);
+
   return (
     <Tabs
       screenOptions={{
@@ -34,6 +47,11 @@ export default function TabLayout() {
         options={{
           title: 'Calls',
           tabBarIcon: ({ color, size }) => <Phone size={size} color={color} />,
+          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
+          tabBarBadgeStyle: {
+            backgroundColor: colors.error,
+            fontSize: 10,
+          },
         }}
       />
       <Tabs.Screen

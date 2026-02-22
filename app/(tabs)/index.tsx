@@ -7,7 +7,7 @@ import {
   Phone,
   MessageCircle,
   Users,
-  Megaphone,
+  Voicemail,
   PhoneCall,
   Search,
   TrendingUp,
@@ -91,6 +91,21 @@ function StatCard({ label, value, change, icon, iconBg }: StatCardProps) {
 
 function ActivityItem({ item }: { item: RecentActivity }) {
   const isCall = item.type === 'call';
+  const isVoicemail = item.type === 'voicemail';
+
+  let iconBg: string;
+  let icon: React.ReactNode;
+
+  if (isVoicemail) {
+    iconBg = colors.secondaryLight;
+    icon = <Voicemail size={18} color={colors.secondary} />;
+  } else if (isCall) {
+    iconBg = colors.primaryLight;
+    icon = <Phone size={18} color={colors.primary} />;
+  } else {
+    iconBg = '#F0FDF4';
+    icon = <MessageCircle size={18} color={colors.success} />;
+  }
 
   return (
     <XStack
@@ -104,15 +119,11 @@ function ActivityItem({ item }: { item: RecentActivity }) {
         width={40}
         height={40}
         borderRadius={20}
-        backgroundColor={isCall ? colors.primaryLight : '#F0FDF4'}
+        backgroundColor={iconBg}
         alignItems="center"
         justifyContent="center"
       >
-        {isCall ? (
-          <Phone size={18} color={colors.primary} />
-        ) : (
-          <MessageCircle size={18} color={colors.success} />
-        )}
+        {icon}
       </YStack>
       <YStack flex={1} gap="$1">
         <Text fontSize={14} fontWeight="600" color={colors.textPrimary}>
@@ -202,11 +213,11 @@ export default function DashboardScreen() {
           iconBg="#F3EEFF"
         />
         <StatCard
-          label="Active Campaigns"
-          value={stats?.active_campaigns ?? 0}
-          change={stats?.campaigns_change ?? '+0%'}
-          icon={<Megaphone size={18} color={colors.warning} />}
-          iconBg="#FFFBEB"
+          label="Voicemails"
+          value={stats?.voicemails_unread ?? 0}
+          change="+0%"
+          icon={<Voicemail size={18} color={colors.error} />}
+          iconBg="#FEE2E2"
         />
       </XStack>
 

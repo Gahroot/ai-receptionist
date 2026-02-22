@@ -14,6 +14,22 @@ export interface Token {
   refresh_token: string;
 }
 
+export interface ActionItem {
+  type: 'call_back' | 'send_message' | 'add_contact' | 'follow_up' | 'custom';
+  label: string;
+  metadata?: Record<string, string>;
+}
+
+export interface CallSummary {
+  id: string;
+  call_id: string;
+  summary: string;
+  key_topics: string[];
+  action_items: ActionItem[];
+  sentiment: 'positive' | 'neutral' | 'negative';
+  created_at: string;
+}
+
 export interface CallResponse {
   id: string;
   conversation_id: string;
@@ -32,6 +48,10 @@ export interface CallResponse {
   agent_name: string | null;
   is_ai: boolean;
   booking_outcome: string | null;
+  is_voicemail: boolean;
+  voicemail_transcription: string | null;
+  is_read: boolean;
+  summary: CallSummary | null;
 }
 
 export interface PaginatedCalls {
@@ -42,6 +62,7 @@ export interface PaginatedCalls {
   pages: number;
   completed_count: number;
   total_duration_seconds: number;
+  voicemail_unread_count: number;
 }
 
 export interface ConversationSummary {
@@ -138,6 +159,7 @@ export interface DashboardStats {
   active_campaigns: number;
   calls_today: number;
   messages_sent: number;
+  voicemails_unread: number;
   contacts_change: string;
   campaigns_change: string;
   calls_change: string;
