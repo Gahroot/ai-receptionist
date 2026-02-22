@@ -6,6 +6,10 @@ import { Phone } from 'lucide-react-native';
 import { useAuthStore } from '../../stores/authStore';
 import { colors } from '../../constants/theme';
 
+const passwordInputProps = Platform.OS === 'web'
+  ? { type: 'password' } as any
+  : { secureTextEntry: true };
+
 export default function LoginScreen() {
   const router = useRouter();
   const login = useAuthStore((s) => s.login);
@@ -81,7 +85,7 @@ export default function LoginScreen() {
             placeholder="Password"
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
+            {...passwordInputProps}
             size="$5"
             borderRadius="$4"
           />

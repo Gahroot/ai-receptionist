@@ -3,6 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { YStack, Text, Button, Paragraph } from 'tamagui';
 import { CheckCircle, Phone, Clock, MessageCircle } from 'lucide-react-native';
 import { colors } from '../../../constants/theme';
+import { useAuthStore } from '../../../stores/authStore';
 
 interface SetupItemProps {
   icon: React.ReactNode;
@@ -29,6 +30,7 @@ function SetupItem({ icon, label }: SetupItemProps) {
 
 export default function OnboardingCompleteScreen() {
   const router = useRouter();
+  const fetchUser = useAuthStore((s) => s.fetchUser);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -91,7 +93,10 @@ export default function OnboardingCompleteScreen() {
           borderRadius="$4"
           fontWeight="600"
           pressStyle={{ opacity: 0.8 }}
-          onPress={() => router.replace('/(tabs)')}
+          onPress={async () => {
+            await fetchUser();
+            router.replace('/(tabs)');
+          }}
         >
           Go to Dashboard
         </Button>

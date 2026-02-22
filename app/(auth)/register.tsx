@@ -6,6 +6,10 @@ import { UserPlus } from 'lucide-react-native';
 import { useAuthStore } from '../../stores/authStore';
 import { colors } from '../../constants/theme';
 
+const passwordInputProps = Platform.OS === 'web'
+  ? { type: 'password' } as any
+  : { secureTextEntry: true };
+
 export default function RegisterScreen() {
   const router = useRouter();
   const register = useAuthStore((s) => s.register);
@@ -28,6 +32,7 @@ export default function RegisterScreen() {
     setError('');
     try {
       await register(email, password, fullName);
+      // register auto-logs in; auth gate will redirect to tabs
     } catch (e: any) {
       setError(e?.response?.data?.detail || 'Registration failed. Please try again.');
     } finally {
@@ -90,7 +95,7 @@ export default function RegisterScreen() {
             placeholder="Password"
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
+            {...passwordInputProps}
             size="$5"
             borderRadius="$4"
           />

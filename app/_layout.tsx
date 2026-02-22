@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { TamaguiProvider, YStack } from 'tamagui';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '../stores/authStore';
@@ -64,8 +64,10 @@ function LoadingScreen() {
 }
 
 export default function RootLayout() {
-  const { isAuthenticated, isLoading, initialize } = useAuthStore();
+  const { isAuthenticated, isLoading, initialize, workspaceId } = useAuthStore();
   const [isInitialized, setIsInitialized] = useState(false);
+  const segments = useSegments();
+  const router = useRouter();
 
   useEffect(() => {
     logger.lifecycle('RootLayout', 'mount');
@@ -82,10 +84,25 @@ export default function RootLayout() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Debug logging for state changes
+  // Redirect based on auth state
   useEffect(() => {
-    logger.debug('Auth state changed', { isAuthenticated, isLoading }, 'RootLayout');
-  }, [isAuthenticated, isLoading]);
+    if (!isInitialized || isLoading) return;
+
+    const inAuthGroup = segments[0] === '(auth)';
+    const inOnboarding = inAuthGroup && String((segments as string[])[1] ?? '').startsWith('onboarding');
+    logger.debug('Auth state changed', { isAuthenticated, isLoading, inAuthGroup, inOnboarding, workspaceId, segments: segments.join('/') }, 'RootLayout');
+
+    if (!isAuthenticated && !inAuthGroup) {
+      // Not logged in and not on auth screen → go to login
+      router.replace('/(auth)/login');
+    } else if (isAuthenticated && !workspaceId && !inOnboarding) {
+      // Logged in but no workspace (needs onboarding)
+      router.replace('/(auth)/onboarding');
+    } else if (isAuthenticated && workspaceId && inAuthGroup) {
+      // Logged in with workspace but still on auth screen → go to tabs
+      router.replace('/(tabs)');
+    }
+  }, [isAuthenticated, isLoading, isInitialized, segments, router, workspaceId]);
 
   // Don't render until initialize is complete on web to prevent state issues
   if (Platform.OS === 'web' && !isInitialized && isLoading) {
@@ -117,21 +134,16 @@ export default function RootLayout() {
         {/* Only render notifications manager on native platforms */}
         {Platform.OS !== 'web' && <NotificationsManager />}
         <Stack screenOptions={{ headerShown: false }}>
-          {isAuthenticated ? (
-            <>
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen
-                name="call/[callId]"
-                options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
-              />
-              <Stack.Screen
-                name="ai-search"
-                options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-              />
-            </>
-          ) : (
-            <Stack.Screen name="(auth)" />
-          )}
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen
+            name="call/[callId]"
+            options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+          />
+          <Stack.Screen
+            name="ai-search"
+            options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+          />
         </Stack>
       </TamaguiProvider>
     </ErrorBoundary>

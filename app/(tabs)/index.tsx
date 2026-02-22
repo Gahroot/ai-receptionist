@@ -234,7 +234,7 @@ export default function DashboardScreen() {
           icon={<PhoneCall size={18} color="#FFFFFF" />}
           onPress={() => router.push('/call/new')}
         >
-          Talk to AI
+          Test Receptionist
         </Button>
         <Button
           flex={1}

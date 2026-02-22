@@ -3,7 +3,7 @@ import { ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { YStack, XStack, Text, TextArea, Button, Spinner, Slider } from 'tamagui';
-import { ArrowLeft, Check } from 'lucide-react-native';
+import { ArrowLeft, Check, PhoneCall } from 'lucide-react-native';
 import { colors } from '../../../constants/theme';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/authStore';
@@ -205,7 +205,7 @@ export default function AIConfigScreen() {
         </YStack>
 
         {/* Save Button */}
-        <YStack paddingHorizontal="$4">
+        <YStack paddingHorizontal="$4" gap="$3">
           <Button
             size="$5"
             backgroundColor={colors.primary}
@@ -217,6 +217,20 @@ export default function AIConfigScreen() {
             pressStyle={{ opacity: 0.8 }}
           >
             {saving ? <Spinner color="white" /> : 'Save Changes'}
+          </Button>
+          <Button
+            size="$5"
+            backgroundColor={colors.backgroundSecondary}
+            color={colors.textPrimary}
+            borderRadius="$4"
+            fontWeight="600"
+            borderWidth={1}
+            borderColor={colors.border}
+            pressStyle={{ backgroundColor: colors.surfaceSecondary }}
+            icon={<PhoneCall size={18} color={colors.primary} />}
+            onPress={() => router.push('/call/new')}
+          >
+            Test This Configuration
           </Button>
         </YStack>
       </ScrollView>
