@@ -31,7 +31,7 @@ export default function OnboardingWelcomeScreen() {
             textAlign="center"
             lineHeight={22}
           >
-            Let's set up your business so your AI can start answering calls, booking
+            Let&apos;s set up your business so your AI can start answering calls, booking
             appointments, and helping your customers.
           </Paragraph>
         </YStack>

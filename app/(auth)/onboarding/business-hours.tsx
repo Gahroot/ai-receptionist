@@ -63,7 +63,7 @@ export default function OnboardingBusinessHoursScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
         <YStack paddingHorizontal="$4" gap="$4" paddingTop="$2">
           <Text fontSize={14} color={colors.textSecondary} lineHeight={20}>
-            Set your business hours so the AI knows when you're open. It can handle calls
+            Set your business hours so the AI knows when you&apos;re open. It can handle calls
             differently during and after hours.
           </Text>
 

@@ -1,37 +1,47 @@
-import { createAnimations } from '@tamagui/animations-react-native';
+import { createAnimations as createNativeAnimations } from '@tamagui/animations-react-native';
+import { createAnimations as createCSSAnimations } from '@tamagui/animations-css';
 import { createTamagui, createTokens } from 'tamagui';
 import { config as defaultConfig } from '@tamagui/config/v3';
+import { Platform } from 'react-native';
 
-const animations = createAnimations({
-  fast: {
-    type: 'spring',
-    damping: 20,
-    mass: 1.2,
-    stiffness: 250,
-  },
-  medium: {
-    type: 'spring',
-    damping: 15,
-    mass: 0.9,
-    stiffness: 150,
-  },
-  slow: {
-    type: 'spring',
-    damping: 20,
-    stiffness: 60,
-  },
-  bouncy: {
-    type: 'spring',
-    damping: 9,
-    mass: 0.9,
-    stiffness: 150,
-  },
-  lazy: {
-    type: 'spring',
-    damping: 18,
-    stiffness: 50,
-  },
-});
+const animations = Platform.OS === 'web'
+  ? createCSSAnimations({
+      fast: 'ease-in 150ms',
+      medium: 'ease-in 250ms',
+      slow: 'ease-in 450ms',
+      bouncy: 'ease-in 250ms',
+      lazy: 'ease-in 600ms',
+    })
+  : createNativeAnimations({
+      fast: {
+        type: 'spring',
+        damping: 20,
+        mass: 1.2,
+        stiffness: 250,
+      },
+      medium: {
+        type: 'spring',
+        damping: 15,
+        mass: 0.9,
+        stiffness: 150,
+      },
+      slow: {
+        type: 'spring',
+        damping: 20,
+        stiffness: 60,
+      },
+      bouncy: {
+        type: 'spring',
+        damping: 9,
+        mass: 0.9,
+        stiffness: 150,
+      },
+      lazy: {
+        type: 'spring',
+        damping: 18,
+        stiffness: 50,
+      },
+    });
 
 const tokens = createTokens({
   ...defaultConfig.tokens,

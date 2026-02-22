@@ -101,7 +101,7 @@ export default function LoginScreen() {
 
         <XStack justifyContent="center" gap="$2" marginTop="$2">
           <Text color="$colorHover" fontSize={14}>
-            Don't have an account?
+            Don&apos;t have an account?
           </Text>
           <Text
             color={colors.primary}

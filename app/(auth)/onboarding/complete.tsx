@@ -47,7 +47,7 @@ export default function OnboardingCompleteScreen() {
           </YStack>
 
           <Text fontSize={26} fontWeight="700" color={colors.textPrimary} textAlign="center">
-            You're All Set!
+            You&apos;re All Set!
           </Text>
           <Paragraph
             fontSize={15}

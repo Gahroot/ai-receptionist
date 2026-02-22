@@ -1,6 +1,32 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 import { API_V1_URL } from '../constants/api';
+import logger from '../lib/logger';
+import { isDevelopment } from '../lib/env';
+
+const getToken = async (key: string): Promise<string | null> => {
+  if (Platform.OS === 'web') {
+    return localStorage.getItem(key);
+  }
+  return await SecureStore.getItemAsync(key);
+};
+
+const setToken = async (key: string, value: string): Promise<void> => {
+  if (Platform.OS === 'web') {
+    localStorage.setItem(key, value);
+  } else {
+    await SecureStore.setItemAsync(key, value);
+  }
+};
+
+const deleteToken = async (key: string): Promise<void> => {
+  if (Platform.OS === 'web') {
+    localStorage.removeItem(key);
+  } else {
+    await SecureStore.deleteItemAsync(key);
+  }
+};
 
 const api = axios.create({
   baseURL: API_V1_URL,
@@ -10,24 +36,42 @@ const api = axios.create({
   },
 });
 
-// Request interceptor: attach auth token
+// Request interceptor: attach auth token + log
 api.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
-    const token = await SecureStore.getItemAsync('access_token');
+    const startTime = Date.now();
+    // Store start time for response timing
+    (config as any)._startTime = startTime;
+
+    const token = await getToken('access_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+
+    // Log request in development
+    if (isDevelopment) {
+      logger.apiRequest(
+        config.method?.toUpperCase() || 'GET',
+        config.url || '',
+        config.data,
+        config.headers as Record<string, string>
+      );
+    }
+
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => {
+    logger.error('API request error', error, {}, 'ApiClient');
+    return Promise.reject(error);
+  }
 );
 
 // Response interceptor: handle 401 + token refresh
 let isRefreshing = false;
-let failedQueue: Array<{
+let failedQueue: {
   resolve: (value: unknown) => void;
   reject: (reason?: unknown) => void;
-}> = [];
+}[] = [];
 
 const processQueue = (error: AxiosError | null) => {
   failedQueue.forEach((prom) => {
@@ -40,13 +84,36 @@ const processQueue = (error: AxiosError | null) => {
   failedQueue = [];
 };
 
+// Response interceptor: handle 401 + token refresh + log
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Calculate request duration
+    const startTime = (response.config as any)._startTime;
+    const duration = startTime ? Date.now() - startTime : 0;
+
+    // Log response in development
+    if (isDevelopment) {
+      logger.apiResponse(
+        response.config.method?.toUpperCase() || 'GET',
+        response.config.url || '',
+        response.status,
+        duration,
+        response.data
+      );
+    }
+
+    return response;
+  },
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+    const startTime = (originalRequest as any)._startTime;
+    const duration = startTime ? Date.now() - startTime : 0;
 
     if (error.response?.status === 401 && !originalRequest._retry) {
+      logger.warn('Token refresh needed', { url: originalRequest.url }, 'ApiClient');
+
       if (isRefreshing) {
+        logger.debug('Token refresh already in progress, queueing request', {}, 'ApiClient');
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         }).then(() => api(originalRequest));
@@ -56,8 +123,11 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const refreshToken = await SecureStore.getItemAsync('refresh_token');
+        logger.debug('Starting token refresh', {}, 'ApiClient');
+
+        const refreshToken = await getToken('refresh_token');
         if (!refreshToken) {
+          logger.error('No refresh token available', null, {}, 'ApiClient');
           throw new Error('No refresh token');
         }
 
@@ -66,20 +136,37 @@ api.interceptors.response.use(
         });
 
         const { access_token, refresh_token } = response.data;
-        await SecureStore.setItemAsync('access_token', access_token);
-        await SecureStore.setItemAsync('refresh_token', refresh_token);
+        await setToken('access_token', access_token);
+        await setToken('refresh_token', refresh_token);
 
+        logger.info('Token refresh successful', {}, 'ApiClient');
         processQueue(null);
         return api(originalRequest);
       } catch (refreshError) {
+        logger.error('Token refresh failed', refreshError, {}, 'ApiClient');
         processQueue(refreshError as AxiosError);
         // Clear tokens on refresh failure
-        await SecureStore.deleteItemAsync('access_token');
-        await SecureStore.deleteItemAsync('refresh_token');
+        await deleteToken('access_token');
+        await deleteToken('refresh_token');
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
       }
+    }
+
+    // Log error response
+    if (isDevelopment) {
+      logger.error(
+        `API error: ${error.config?.method?.toUpperCase()} ${error.config?.url}`,
+        error,
+        {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          duration: `${duration}ms`,
+        },
+        'ApiClient'
+      );
     }
 
     return Promise.reject(error);

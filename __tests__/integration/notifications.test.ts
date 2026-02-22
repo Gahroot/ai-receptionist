@@ -4,7 +4,7 @@
  * Tests push registration, notification listeners, deep linking,
  * badge clearing, and cleanup behavior.
  */
-import { renderHook, act } from '@testing-library/react-native';
+import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
@@ -111,9 +111,9 @@ describe('useNotifications Integration', () => {
 
       const { unmount } = renderHook(() => useNotifications());
 
-      // Allow async registration to complete
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+      // Wait for async registration to complete
+      await waitFor(() => {
+        expect(useNotificationStore.getState().isRegistered).toBe(true);
       });
 
       expect(setupAndroidChannels).toHaveBeenCalled();
@@ -133,8 +133,9 @@ describe('useNotifications Integration', () => {
 
       const { unmount } = renderHook(() => useNotifications());
 
+      // Flush promises
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setImmediate(resolve));
       });
 
       expect(getExpoPushToken).not.toHaveBeenCalled();
@@ -149,8 +150,9 @@ describe('useNotifications Integration', () => {
 
       const { unmount } = renderHook(() => useNotifications());
 
+      // Flush promises
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setImmediate(resolve));
       });
 
       expect(getExpoPushToken).not.toHaveBeenCalled();
@@ -170,14 +172,13 @@ describe('useNotifications Integration', () => {
 
       const { unmount } = renderHook(() => useNotifications());
 
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+      // Wait for the error to be logged
+      await waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith(
+          'Push notification registration failed:',
+          expect.any(Error)
+        );
       });
-
-      expect(warnSpy).toHaveBeenCalledWith(
-        'Push notification registration failed:',
-        expect.any(Error)
-      );
 
       // Store should not have been updated
       expect(useNotificationStore.getState().isRegistered).toBe(false);
@@ -191,8 +192,8 @@ describe('useNotifications Integration', () => {
 
       const { rerender, unmount } = renderHook(() => useNotifications());
 
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitFor(() => {
+        expect(useNotificationStore.getState().isRegistered).toBe(true);
       });
 
       expect(registerToken).toHaveBeenCalledTimes(1);
@@ -200,8 +201,9 @@ describe('useNotifications Integration', () => {
       // Re-render the hook
       rerender({});
 
+      // Flush promises
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setImmediate(resolve));
       });
 
       // Should still only be called once (hasRegistered.current prevents re-registration)
@@ -354,8 +356,9 @@ describe('useNotifications Integration', () => {
 
       renderHook(() => useNotifications());
 
+      // Flush promises to let useEffect run
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setImmediate(resolve));
       });
 
       expect(clearBadge).toHaveBeenCalled();
@@ -383,8 +386,9 @@ describe('useNotifications Integration', () => {
 
       renderHook(() => useNotifications());
 
+      // Flush promises
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setImmediate(resolve));
       });
 
       expect(clearBadge).not.toHaveBeenCalled();
@@ -421,8 +425,8 @@ describe('useNotifications Integration', () => {
 
       const { rerender, unmount } = renderHook(() => useNotifications());
 
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+      await waitFor(() => {
+        expect(useNotificationStore.getState().isRegistered).toBe(true);
       });
 
       expect(registerToken).toHaveBeenCalledTimes(1);
@@ -434,8 +438,9 @@ describe('useNotifications Integration', () => {
 
       rerender({});
 
+      // Flush promises
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setImmediate(resolve));
       });
 
       // Log back in
@@ -445,12 +450,10 @@ describe('useNotifications Integration', () => {
 
       rerender({});
 
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+      // Wait for re-registration
+      await waitFor(() => {
+        expect(registerToken).toHaveBeenCalledTimes(2);
       });
-
-      // Should have registered again after re-authentication
-      expect(registerToken).toHaveBeenCalledTimes(2);
 
       unmount();
     });

@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useCallStore } from '../stores/callStore';
 import audioService from '../services/audioService';
 import audioPlaybackService from '../services/audioPlaybackService';
+import logger from '../lib/logger';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_RECONNECT_DELAY = 1000;
@@ -20,13 +21,21 @@ export function useVoiceSession() {
   const isEndingRef = useRef(false);
   const agentIdRef = useRef<string | null>(null);
 
+  // Log hook mount
+  useEffect(() => {
+    logger.lifecycle('useVoiceSession', 'mount');
+    return () => {
+      logger.lifecycle('useVoiceSession', 'unmount');
+    };
+  }, []);
+
   // VAD debounce refs
   const speechStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const userSpeakingRef = useRef(false);
 
   const workspaceId = useAuthStore((s) => s.workspaceId);
-  const { isInCall, isMuted, addTranscript } = useCallStore();
+  const { addTranscript } = useCallStore();
 
   const {
     startRecording: startAudioRecording,
@@ -64,7 +73,12 @@ export function useVoiceSession() {
 
   const connectWebSocket = useCallback(
     (agentId: string) => {
-      if (!workspaceId) return;
+      if (!workspaceId) {
+        logger.warn('Cannot connect: no workspaceId', {}, 'VoiceSession');
+        return;
+      }
+
+      logger.lifecycle('VoiceSession', 'connectWebSocket:start', { workspaceId, agentId });
 
       cleanup();
       isEndingRef.current = false;
@@ -73,7 +87,10 @@ export function useVoiceSession() {
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
+      logger.websocket('Connecting', { url });
+
       ws.onopen = () => {
+        logger.websocket('Connected', { url, agentId });
         reconnectAttemptRef.current = 0;
         ws.send(JSON.stringify({ type: 'start' }));
       };
@@ -82,9 +99,11 @@ export function useVoiceSession() {
         try {
           const msg = JSON.parse(event.data);
 
+          logger.websocket('Message received', { type: msg.type });
+
           switch (msg.type) {
             case 'connected':
-              console.log('[VoiceSession] Connected to voice server');
+              logger.info('Connected to voice server', {}, 'VoiceSession');
               break;
             case 'audio':
               if (msg.data) {
@@ -97,31 +116,34 @@ export function useVoiceSession() {
               }
               break;
             case 'error':
-              console.error('[VoiceSession] Server error:', msg.message);
+              logger.error('Server error during voice session', null, { message: msg.message }, 'VoiceSession');
               break;
             case 'stopped':
-              console.log('[VoiceSession] Server confirmed stop');
+              logger.info('Server confirmed stop', {}, 'VoiceSession');
               break;
             default:
-              console.log('[VoiceSession] Unknown message type:', msg.type);
+              logger.debug('Unknown message type', { messageType: msg.type }, 'VoiceSession');
           }
         } catch (e) {
-          console.error('[VoiceSession] Failed to parse message:', e);
+          logger.error('Failed to parse WebSocket message', e, { data: event.data }, 'VoiceSession');
         }
       };
 
       ws.onerror = (error) => {
-        console.error('[VoiceSession] WebSocket error:', error);
+        logger.error('WebSocket error', error, { url }, 'VoiceSession');
       };
 
       ws.onclose = () => {
+        logger.websocket('Disconnected', { url });
         if (!isEndingRef.current && reconnectAttemptRef.current < MAX_RECONNECT_ATTEMPTS) {
           const delay = BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttemptRef.current);
           reconnectAttemptRef.current += 1;
-          console.log(`[VoiceSession] Reconnecting in ${delay}ms (attempt ${reconnectAttemptRef.current})`);
+          logger.info(`Reconnecting in ${delay}ms`, { attempt: reconnectAttemptRef.current }, 'VoiceSession');
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket(agentId);
           }, delay);
+        } else if (reconnectAttemptRef.current >= MAX_RECONNECT_ATTEMPTS) {
+          logger.error('Max reconnect attempts reached', null, { attempts: reconnectAttemptRef.current }, 'VoiceSession');
         }
       };
     },
@@ -179,6 +201,8 @@ export function useVoiceSession() {
 
   const startCall = useCallback(
     async (agentId: string) => {
+      logger.lifecycle('VoiceSession', 'startCall:start', { agentId });
+
       agentIdRef.current = agentId;
 
       // Reset playback service for new call
@@ -189,7 +213,11 @@ export function useVoiceSession() {
         useCallStore.getState().setAiSpeaking(speaking);
       });
 
-      await audioService.setupAudioMode();
+      try {
+        await audioService.setupAudioMode();
+      } catch (e) {
+        logger.error('Failed to setup audio mode', e, {}, 'VoiceSession');
+      }
 
       connectWebSocket(agentId);
 
@@ -206,14 +234,17 @@ export function useVoiceSession() {
 
       try {
         await startAudioRecording(config);
+        logger.lifecycle('VoiceSession', 'startCall:success');
       } catch (e) {
-        console.error('[VoiceSession] Failed to start audio recording:', e);
+        logger.error('Failed to start audio recording', e, {}, 'VoiceSession');
       }
     },
     [connectWebSocket, startAudioRecording, handleSpeechStateChange]
   );
 
   const endCall = useCallback(async () => {
+    logger.lifecycle('VoiceSession', 'endCall:start');
+
     isEndingRef.current = true;
 
     audioPlaybackService.flush();
@@ -221,7 +252,7 @@ export function useVoiceSession() {
     try {
       await stopAudioRecording();
     } catch (e) {
-      console.error('[VoiceSession] Failed to stop audio recording:', e);
+      logger.error('Failed to stop audio recording', e, {}, 'VoiceSession');
     }
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -231,6 +262,8 @@ export function useVoiceSession() {
     cleanup();
     audioPlaybackService.destroy();
     agentIdRef.current = null;
+
+    logger.lifecycle('VoiceSession', 'endCall:complete');
   }, [stopAudioRecording, cleanup]);
 
   const toggleMute = useCallback(() => {

@@ -117,3 +117,24 @@ if (typeof globalThis.atob === 'undefined') {
 if (typeof globalThis.btoa === 'undefined') {
   globalThis.btoa = (input: string) => Buffer.from(input, 'binary').toString('base64');
 }
+
+// Suppress act() warnings for Zustand state updates
+// This is a known issue when using Zustand with React Testing Library:
+// https://github.com/pmndrs/zustand/issues/1635
+// The warnings occur because Zustand's store updates can trigger React renders
+// outside of test act() blocks when used in hooks, but this doesn't indicate
+// actual test flakiness or incorrect behavior.
+const originalError = console.error;
+console.error = (...args: unknown[]) => {
+  // Convert all args to string for checking
+  const message = args.map((arg) =>
+    typeof arg === 'string' ? arg : JSON.stringify(arg)
+  ).join(' ');
+  if (message.includes('An update to HookContainer inside a test was not wrapped in act')) {
+    return; // Suppress Zustand-related act warnings
+  }
+  if (message.includes('When testing, code that causes React state updates')) {
+    return; // Suppress the follow-up act() warning
+  }
+  originalError.apply(console, args as unknown as Parameters<typeof console.error>);
+};

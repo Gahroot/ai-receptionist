@@ -11,6 +11,7 @@ import {
   setupAndroidChannels,
   clearBadge,
 } from '../services/notificationService';
+import logger from '../lib/logger';
 
 export function useNotifications() {
   const router = useRouter();
@@ -18,6 +19,14 @@ export function useNotifications() {
   const workspaceId = useAuthStore((s) => s.workspaceId);
   const { setToken, setRegistered } = useNotificationStore();
   const hasRegistered = useRef(false);
+
+  // Log hook mount
+  useEffect(() => {
+    logger.lifecycle('useNotifications', 'mount');
+    return () => {
+      logger.lifecycle('useNotifications', 'unmount');
+    };
+  }, []);
 
   // Register for push notifications when authenticated (native only)
   useEffect(() => {
@@ -27,6 +36,7 @@ export function useNotifications() {
     let cancelled = false;
 
     async function registerForPush() {
+      logger.lifecycle('Notifications', 'registerForPush:start');
       try {
         await setupAndroidChannels();
         const token = await getExpoPushToken();
@@ -35,8 +45,9 @@ export function useNotifications() {
         setToken(token);
         setRegistered(true);
         hasRegistered.current = true;
+        logger.lifecycle('Notifications', 'registerForPush:success', { hasToken: !!token });
       } catch (err) {
-        console.warn('Push notification registration failed:', err);
+        logger.error('Push notification registration failed', err, {}, 'Notifications');
       }
     }
 
@@ -52,9 +63,12 @@ export function useNotifications() {
     if (Platform.OS === 'web') return;
     if (!isAuthenticated) return;
 
+    logger.lifecycle('Notifications', 'setupListeners:start');
+
     // Foreground notification received
     const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
-      console.log('Notification received:', notification.request.content.title);
+      const title = notification.request.content.title;
+      logger.lifecycle('Notifications', 'received', { title });
 
       // Refresh voicemail unread count on voicemail push
       const data = notification.request.content.data;
@@ -66,6 +80,7 @@ export function useNotifications() {
     // User tapped notification -> deep link
     const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data;
+      logger.lifecycle('Notifications', 'tapped', { data });
       if (data?.screen && typeof data.screen === 'string') {
         router.push(data.screen as any);
       }
@@ -74,6 +89,7 @@ export function useNotifications() {
     return () => {
       receivedSub.remove();
       responseSub.remove();
+      logger.lifecycle('Notifications', 'setupListeners:cleanup');
     };
   }, [isAuthenticated, router, workspaceId]);
 
@@ -86,6 +102,7 @@ export function useNotifications() {
       const response = await Notifications.getLastNotificationResponseAsync();
       if (response) {
         const data = response.notification.request.content.data;
+        logger.lifecycle('Notifications', 'initialNotification', { data });
         if (data?.screen && typeof data.screen === 'string') {
           // Small delay to let navigation mount
           setTimeout(() => router.push(data.screen as any), 500);

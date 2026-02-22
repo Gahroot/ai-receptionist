@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../services/api';
+import logger from '../lib/logger';
+import { showErrorFrom } from '../services/toastService';
 
 interface VoicemailState {
   unreadCount: number;
@@ -21,18 +23,22 @@ export const useVoicemailStore = create<VoicemailState>()(
       isLoading: false,
 
       fetchUnreadCount: async (workspaceId) => {
+        logger.lifecycle('VoicemailStore', 'fetchUnreadCount:start', { workspaceId });
         set({ isLoading: true });
         try {
           const response = await api.get<{ unread: number }>(
             `/workspaces/${workspaceId}/calls/voicemail/unread-count`
           );
           set({ unreadCount: response.data.unread, isLoading: false });
-        } catch {
+          logger.stateChange('Voicemail', 'fetchUnreadCount', { unreadCount: response.data.unread });
+        } catch (err) {
+          logger.error('Failed to fetch voicemail unread count', err, { workspaceId }, 'VoicemailStore');
           set({ isLoading: false });
         }
       },
 
       markAsRead: async (workspaceId, callId) => {
+        logger.lifecycle('VoicemailStore', 'markAsRead:start', { workspaceId, callId });
         // Optimistic decrement
         const prev = get().unreadCount;
         if (prev > 0) {
@@ -41,9 +47,12 @@ export const useVoicemailStore = create<VoicemailState>()(
 
         try {
           await api.put(`/workspaces/${workspaceId}/calls/${callId}/read`);
-        } catch {
+          logger.lifecycle('VoicemailStore', 'markAsRead:success');
+        } catch (err) {
+          logger.error('Failed to mark voicemail as read', err, { workspaceId, callId }, 'VoicemailStore');
           // Rollback on failure
           set({ unreadCount: prev });
+          showErrorFrom(err, 'Failed to mark voicemail as read.');
         }
       },
 

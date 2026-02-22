@@ -6,6 +6,12 @@ export function useAudioPermissions() {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
 
   useEffect(() => {
+    // Skip permission check on web - browser handles mic permissions via getUserMedia
+    if (Platform.OS === 'web') {
+      setHasPermission(true); // Assume granted on web, will prompt when needed
+      return;
+    }
+
     ExpoAudioStreamModule.getPermissionsAsync()
       .then((result: { granted: boolean }) => {
         setHasPermission(result.granted);
@@ -16,6 +22,12 @@ export function useAudioPermissions() {
   }, []);
 
   const requestPermission = useCallback(async (): Promise<boolean> => {
+    // On web, browser will handle permission prompt via getUserMedia
+    if (Platform.OS === 'web') {
+      setHasPermission(true);
+      return true;
+    }
+
     const result = await ExpoAudioStreamModule.requestPermissionsAsync();
     setHasPermission(result.granted);
 

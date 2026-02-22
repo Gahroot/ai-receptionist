@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { TranscriptEntry } from '../lib/types';
+import logger from '../lib/logger';
 
 interface CallState {
   isInCall: boolean;
@@ -24,7 +25,7 @@ interface CallState {
   setCallId: (id: string) => void;
 }
 
-export const useCallStore = create<CallState>()((set) => ({
+export const useCallStore = create<CallState>()((set, get) => ({
   isInCall: false,
   callId: null,
   contactName: null,
@@ -36,8 +37,9 @@ export const useCallStore = create<CallState>()((set) => ({
   isUserSpeaking: false,
   transcript: [],
 
-  startCall: ({ callId, contactName, contactNumber }) =>
-    set({
+  startCall: ({ callId, contactName, contactNumber }) => {
+    logger.stateChange('Call', 'startCall', { callId, contactName, contactNumber });
+    return set({
       isInCall: true,
       callId: callId || null,
       contactName: contactName || null,
@@ -48,10 +50,13 @@ export const useCallStore = create<CallState>()((set) => ({
       isAiSpeaking: false,
       isUserSpeaking: false,
       transcript: [],
-    }),
+    });
+  },
 
-  endCall: () =>
-    set({
+  endCall: () => {
+    const duration = get().duration;
+    logger.stateChange('Call', 'endCall', { duration });
+    return set({
       isInCall: false,
       callId: null,
       contactName: null,
@@ -62,13 +67,35 @@ export const useCallStore = create<CallState>()((set) => ({
       isAiSpeaking: false,
       isUserSpeaking: false,
       transcript: [],
-    }),
+    });
+  },
 
-  toggleMute: () => set((state) => ({ isMuted: !state.isMuted })),
-  toggleSpeaker: () => set((state) => ({ isSpeaker: !state.isSpeaker })),
-  setAiSpeaking: (speaking) => set({ isAiSpeaking: speaking }),
+  toggleMute: () => {
+    const newIsMuted = !get().isMuted;
+    set({ isMuted: newIsMuted });
+    logger.stateChange('Call', 'toggleMute', { isMuted: newIsMuted });
+  },
+  toggleSpeaker: () => {
+    const newIsSpeaker = !get().isSpeaker;
+    set({ isSpeaker: newIsSpeaker });
+    logger.stateChange('Call', 'toggleSpeaker', { isSpeaker: newIsSpeaker });
+  },
+  setAiSpeaking: (speaking) => {
+    // Only log state changes, not every update
+    const currentIsAiSpeaking = get().isAiSpeaking;
+    if (currentIsAiSpeaking !== speaking) {
+      logger.debug('AI speaking state changed', { isSpeaking: speaking }, 'CallStore');
+    }
+    return set({ isAiSpeaking: speaking });
+  },
   setUserSpeaking: (speaking) => set({ isUserSpeaking: speaking }),
-  addTranscript: (entry) => set((state) => ({ transcript: [...state.transcript, entry] })),
+  addTranscript: (entry) => {
+    logger.debug('Transcript entry added', { role: entry.role, textLength: entry.text.length }, 'CallStore');
+    return set((state) => ({ transcript: [...state.transcript, entry] }));
+  },
   incrementDuration: () => set((state) => ({ duration: state.duration + 1 })),
-  setCallId: (id) => set({ callId: id }),
+  setCallId: (id) => {
+    logger.stateChange('Call', 'setCallId', { callId: id });
+    return set({ callId: id });
+  },
 }));
