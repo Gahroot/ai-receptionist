@@ -1,33 +1,50 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { YStack, XStack, Text, TextArea, Button, Spinner, Slider } from 'tamagui';
-import { ArrowLeft, Check, PhoneCall } from 'lucide-react-native';
+import { ArrowLeft, Check, PhoneCall, Play, Pause } from 'lucide-react-native';
 import { colors } from '../../../constants/theme';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/authStore';
-import type { Agent } from '../../../lib/types';
+import { useAudioPreview } from '../../../hooks/useAudioPreview';
+import type { Agent, VoiceOption } from '../../../lib/types';
 
-const VOICES = [
-  { id: 'alloy', label: 'Alloy', description: 'Neutral and balanced' },
-  { id: 'shimmer', label: 'Shimmer', description: 'Warm and expressive' },
-  { id: 'nova', label: 'Nova', description: 'Friendly and upbeat' },
-  { id: 'echo', label: 'Echo', description: 'Smooth and clear' },
-  { id: 'onyx', label: 'Onyx', description: 'Deep and authoritative' },
+const VOICES: VoiceOption[] = [
+  { id: 'alloy', label: 'Alloy', description: 'Neutral and balanced', tags: ['neutral', 'professional'], preview_url: null },
+  { id: 'shimmer', label: 'Shimmer', description: 'Warm and expressive', tags: ['warm', 'expressive'], preview_url: null },
+  { id: 'nova', label: 'Nova', description: 'Friendly and upbeat', tags: ['friendly', 'warm'], preview_url: null },
+  { id: 'echo', label: 'Echo', description: 'Smooth and clear', tags: ['professional', 'calm'], preview_url: null },
+  { id: 'onyx', label: 'Onyx', description: 'Deep and authoritative', tags: ['professional', 'authoritative'], preview_url: null },
+  { id: 'fable', label: 'Fable', description: 'Storytelling and narrative', tags: ['warm', 'expressive'], preview_url: null },
+  { id: 'coral', label: 'Coral', description: 'Conversational and natural', tags: ['friendly', 'casual'], preview_url: null },
+  { id: 'sage', label: 'Sage', description: 'Calm and knowledgeable', tags: ['calm', 'professional'], preview_url: null },
+  { id: 'ash', label: 'Ash', description: 'Crisp and direct', tags: ['professional', 'neutral'], preview_url: null },
+  { id: 'ballad', label: 'Ballad', description: 'Melodic and soothing', tags: ['warm', 'calm'], preview_url: null },
+  { id: 'verse', label: 'Verse', description: 'Articulate and refined', tags: ['professional', 'authoritative'], preview_url: null },
+  { id: 'juniper', label: 'Juniper', description: 'Bright and energetic', tags: ['friendly', 'expressive'], preview_url: null },
 ];
+
+const ALL_TAGS = ['All', 'Professional', 'Warm', 'Friendly', 'Calm', 'Expressive', 'Neutral', 'Authoritative', 'Casual'];
 
 export default function AIConfigScreen() {
   const router = useRouter();
   const workspaceId = useAuthStore((s) => s.workspaceId);
+  const { playingId, play, stop } = useAudioPreview();
   const [agent, setAgent] = useState<Agent | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [selectedTag, setSelectedTag] = useState('All');
 
   const [voice, setVoice] = useState('alloy');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [greeting, setGreeting] = useState('');
   const [temperature, setTemperature] = useState(0.7);
+
+  const filteredVoices = useMemo(() => {
+    if (selectedTag === 'All') return VOICES;
+    return VOICES.filter((v) => v.tags.includes(selectedTag.toLowerCase()));
+  }, [selectedTag]);
 
   const fetchAgent = useCallback(async () => {
     if (!workspaceId) return;
@@ -71,6 +88,15 @@ export default function AIConfigScreen() {
     }
   };
 
+  const handlePreviewPress = (v: VoiceOption) => {
+    if (!v.preview_url) return;
+    if (playingId === v.id) {
+      stop();
+    } else {
+      play(v.id, v.preview_url);
+    }
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -104,8 +130,30 @@ export default function AIConfigScreen() {
           <Text fontSize={16} fontWeight="600" color={colors.textPrimary}>
             Voice
           </Text>
+
+          {/* Tag Filter Chips */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <XStack gap="$2" paddingVertical="$1">
+              {ALL_TAGS.map((tag) => (
+                <Button
+                  key={tag}
+                  size="$2"
+                  borderRadius="$6"
+                  backgroundColor={selectedTag === tag ? colors.primary : colors.backgroundSecondary}
+                  color={selectedTag === tag ? 'white' : colors.textSecondary}
+                  borderWidth={1}
+                  borderColor={selectedTag === tag ? colors.primary : colors.borderLight}
+                  pressStyle={{ opacity: 0.8 }}
+                  onPress={() => setSelectedTag(tag)}
+                >
+                  {tag}
+                </Button>
+              ))}
+            </XStack>
+          </ScrollView>
+
           <YStack gap="$2">
-            {VOICES.map((v) => (
+            {filteredVoices.map((v) => (
               <XStack
                 key={v.id}
                 padding="$3"
@@ -118,6 +166,27 @@ export default function AIConfigScreen() {
                 pressStyle={{ backgroundColor: colors.backgroundSecondary }}
                 onPress={() => setVoice(v.id)}
               >
+                {/* Play/Pause Button */}
+                <Button
+                  size="$3"
+                  circular
+                  backgroundColor={v.preview_url ? colors.backgroundSecondary : colors.borderLight}
+                  pressStyle={{ backgroundColor: colors.surfaceSecondary }}
+                  opacity={v.preview_url ? 1 : 0.4}
+                  disabled={!v.preview_url}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handlePreviewPress(v);
+                  }}
+                  icon={
+                    playingId === v.id ? (
+                      <Pause size={16} color={colors.primary} />
+                    ) : (
+                      <Play size={16} color={v.preview_url ? colors.primary : colors.textTertiary} />
+                    )
+                  }
+                />
+
                 <YStack flex={1} gap="$1">
                   <Text fontSize={15} fontWeight="600" color={colors.textPrimary}>
                     {v.label}
@@ -125,6 +194,23 @@ export default function AIConfigScreen() {
                   <Text fontSize={13} color={colors.textSecondary}>
                     {v.description}
                   </Text>
+                  {/* Tag Badges */}
+                  <XStack gap="$1" flexWrap="wrap" marginTop="$1">
+                    {v.tags.map((tag) => (
+                      <Text
+                        key={tag}
+                        fontSize={10}
+                        color={colors.textTertiary}
+                        backgroundColor={colors.backgroundSecondary}
+                        paddingHorizontal="$1.5"
+                        paddingVertical="$0.5"
+                        borderRadius="$2"
+                        textTransform="capitalize"
+                      >
+                        {tag}
+                      </Text>
+                    ))}
+                  </XStack>
                 </YStack>
                 {voice === v.id && <Check size={20} color={colors.primary} />}
               </XStack>

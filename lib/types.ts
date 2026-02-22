@@ -203,3 +203,65 @@ export interface AISearchResult {
     date: string;
   }[];
 }
+
+// Call Scope
+export interface CallScopeSettings {
+  scope: 'everyone' | 'unknown_only' | 'contacts_only' | 'disabled';
+  ring_count: number;
+  ending_message: string;
+}
+
+// Voice
+export interface VoiceOption {
+  id: string;
+  label: string;
+  description: string;
+  tags: string[];
+  preview_url: string | null;
+}
+
+// Knowledge Base
+export interface FAQItem {
+  id: string;
+  question: string;
+  answer: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Daily Recap
+export interface DailyRecapMetrics {
+  calls_answered: number;
+  calls_missed: number;
+  messages_received: number;
+  messages_sent: number;
+  voicemails: number;
+  new_contacts: number;
+}
+
+export interface NotableInteraction {
+  id: string;
+  type: 'call' | 'message' | 'voicemail';
+  contact_name: string | null;
+  summary: string;
+  sentiment: 'positive' | 'neutral' | 'negative';
+  time: string;
+}
+
+export interface RecapActionItem {
+  id: string;
+  type: 'follow_up' | 'call_back' | 'respond' | 'review';
+  description: string;
+  contact_name: string | null;
+  completed: boolean;
+}
+
+export interface DailyRecap {
+  id: string;
+  date: string;
+  summary: string;
+  metrics: DailyRecapMetrics;
+  notable_interactions: NotableInteraction[];
+  action_items: RecapActionItem[];
+  generated_at: string;
+}

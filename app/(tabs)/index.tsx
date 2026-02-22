@@ -10,6 +10,8 @@ import {
   Voicemail,
   PhoneCall,
   Search,
+  Sparkles,
+  ChevronRight,
   TrendingUp,
   TrendingDown,
 } from 'lucide-react-native';
@@ -219,6 +221,39 @@ export default function DashboardScreen() {
           icon={<Voicemail size={18} color={colors.error} />}
           iconBg="#FEE2E2"
         />
+      </XStack>
+
+      {/* Daily Recap Banner */}
+      <XStack
+        backgroundColor={colors.backgroundSecondary}
+        borderRadius="$4"
+        borderWidth={1}
+        borderColor={colors.borderLight}
+        padding="$3.5"
+        alignItems="center"
+        gap="$3"
+        pressStyle={{ backgroundColor: colors.surfaceSecondary }}
+        onPress={() => router.push('/daily-recap')}
+      >
+        <YStack
+          width={40}
+          height={40}
+          borderRadius={20}
+          backgroundColor={colors.secondaryLight}
+          alignItems="center"
+          justifyContent="center"
+        >
+          <Sparkles size={20} color={colors.secondary} />
+        </YStack>
+        <YStack flex={1} gap="$0.5">
+          <Text fontSize={15} fontWeight="600" color={colors.textPrimary}>
+            Daily Recap
+          </Text>
+          <Text fontSize={13} color={colors.textSecondary}>
+            View today&apos;s AI-generated summary
+          </Text>
+        </YStack>
+        <ChevronRight size={20} color={colors.textTertiary} />
       </XStack>
 
       {/* Quick Actions */}

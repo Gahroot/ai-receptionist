@@ -144,6 +144,10 @@ export default function RootLayout() {
             name="ai-search"
             options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
           />
+          <Stack.Screen
+            name="daily-recap"
+            options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+          />
         </Stack>
       </TamaguiProvider>
     </ErrorBoundary>

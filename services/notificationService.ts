@@ -74,6 +74,12 @@ export async function setupAndroidChannels(): Promise<void> {
     importance: Notifications.AndroidImportance.DEFAULT,
     sound: 'default',
   });
+
+  await Notifications.setNotificationChannelAsync('daily-recap', {
+    name: 'Daily Recap',
+    importance: Notifications.AndroidImportance.DEFAULT,
+    sound: 'default',
+  });
 }
 
 export async function clearBadge(): Promise<void> {

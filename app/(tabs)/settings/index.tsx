@@ -4,6 +4,8 @@ import { useRouter } from 'expo-router';
 import { YStack, XStack, Text, Button, Separator } from 'tamagui';
 import {
   Bot,
+  ShieldCheck,
+  BookOpen,
   Clock,
   PhoneForwarded,
   Bell,
@@ -105,6 +107,18 @@ export default function SettingsScreen() {
             icon={<Bot size={22} color={colors.primary} />}
             label="AI Receptionist"
             onPress={() => router.push('/(tabs)/settings/ai-config')}
+          />
+          <Separator borderColor={colors.borderLight} />
+          <MenuItem
+            icon={<ShieldCheck size={22} color={colors.success} />}
+            label="Call Scope"
+            onPress={() => router.push('/(tabs)/settings/call-scope')}
+          />
+          <Separator borderColor={colors.borderLight} />
+          <MenuItem
+            icon={<BookOpen size={22} color="#10B981" />}
+            label="Knowledge Base"
+            onPress={() => router.push('/(tabs)/settings/knowledge-base')}
           />
           <Separator borderColor={colors.borderLight} />
           <MenuItem

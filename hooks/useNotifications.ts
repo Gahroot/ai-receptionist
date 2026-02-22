@@ -81,6 +81,10 @@ export function useNotifications() {
     const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data;
       logger.lifecycle('Notifications', 'tapped', { data });
+      if (data?.type === 'daily_recap') {
+        router.push('/daily-recap');
+        return;
+      }
       if (data?.screen && typeof data.screen === 'string') {
         router.push(data.screen as any);
       }
