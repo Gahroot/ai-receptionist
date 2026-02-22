@@ -18,7 +18,7 @@
       "bundleIdentifier": "com.aireceptionist.app",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Used for live AI voice calls",
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": ["audio", "remote-notification"]
       }
     },
     "android": {
@@ -33,6 +33,11 @@
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "your-eas-project-id"
+      }
     },
     "plugins": [
       "expo-router",

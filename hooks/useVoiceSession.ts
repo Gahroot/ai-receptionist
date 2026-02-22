@@ -4,9 +4,14 @@ import { WS_BASE_URL } from '../constants/api';
 import { useAuthStore } from '../stores/authStore';
 import { useCallStore } from '../stores/callStore';
 import audioService from '../services/audioService';
+import audioPlaybackService from '../services/audioPlaybackService';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_RECONNECT_DELAY = 1000;
+
+// VAD debounce timers (ms)
+const SPEECH_START_DEBOUNCE = 100;
+const SPEECH_END_DEBOUNCE = 500;
 
 export function useVoiceSession() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -14,6 +19,11 @@ export function useVoiceSession() {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isEndingRef = useRef(false);
   const agentIdRef = useRef<string | null>(null);
+
+  // VAD debounce refs
+  const speechStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speechEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userSpeakingRef = useRef(false);
 
   const workspaceId = useAuthStore((s) => s.workspaceId);
   const { isInCall, isMuted, addTranscript } = useCallStore();
@@ -29,6 +39,14 @@ export function useVoiceSession() {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+    if (speechStartTimerRef.current) {
+      clearTimeout(speechStartTimerRef.current);
+      speechStartTimerRef.current = null;
+    }
+    if (speechEndTimerRef.current) {
+      clearTimeout(speechEndTimerRef.current);
+      speechEndTimerRef.current = null;
+    }
     if (wsRef.current) {
       wsRef.current.onopen = null;
       wsRef.current.onmessage = null;
@@ -41,6 +59,7 @@ export function useVoiceSession() {
       wsRef.current = null;
     }
     reconnectAttemptRef.current = 0;
+    userSpeakingRef.current = false;
   }, []);
 
   const connectWebSocket = useCallback(
@@ -68,8 +87,9 @@ export function useVoiceSession() {
               console.log('[VoiceSession] Connected to voice server');
               break;
             case 'audio':
-              // Server audio playback - log for now (needs native bridge for real playback)
-              console.log('[VoiceSession] Received audio chunk, length:', msg.data?.length || 0);
+              if (msg.data) {
+                audioPlaybackService.enqueue(msg.data);
+              }
               break;
             case 'transcript':
               if (msg.role && msg.text) {
@@ -108,20 +128,80 @@ export function useVoiceSession() {
     [workspaceId, cleanup, addTranscript]
   );
 
+  /**
+   * VAD speech state change handler with debouncing.
+   * - Speech start: 100ms debounce (responsive)
+   * - Speech end: 500ms debounce (avoid flicker)
+   * - Barge-in: flush AI playback when user starts speaking
+   */
+  const handleSpeechStateChange = useCallback((isSpeaking: boolean) => {
+    if (isSpeaking) {
+      // Clear any pending speech-end timer
+      if (speechEndTimerRef.current) {
+        clearTimeout(speechEndTimerRef.current);
+        speechEndTimerRef.current = null;
+      }
+
+      if (!userSpeakingRef.current) {
+        // Debounce speech start
+        if (!speechStartTimerRef.current) {
+          speechStartTimerRef.current = setTimeout(() => {
+            speechStartTimerRef.current = null;
+            userSpeakingRef.current = true;
+            useCallStore.getState().setUserSpeaking(true);
+
+            // Barge-in: if AI is speaking, interrupt it
+            if (useCallStore.getState().isAiSpeaking) {
+              audioPlaybackService.flush();
+            }
+          }, SPEECH_START_DEBOUNCE);
+        }
+      }
+    } else {
+      // Clear any pending speech-start timer
+      if (speechStartTimerRef.current) {
+        clearTimeout(speechStartTimerRef.current);
+        speechStartTimerRef.current = null;
+      }
+
+      if (userSpeakingRef.current) {
+        // Debounce speech end
+        if (!speechEndTimerRef.current) {
+          speechEndTimerRef.current = setTimeout(() => {
+            speechEndTimerRef.current = null;
+            userSpeakingRef.current = false;
+            useCallStore.getState().setUserSpeaking(false);
+          }, SPEECH_END_DEBOUNCE);
+        }
+      }
+    }
+  }, []);
+
   const startCall = useCallback(
     async (agentId: string) => {
       agentIdRef.current = agentId;
+
+      // Reset playback service for new call
+      audioPlaybackService.reset();
+
+      // Wire AI speaking state to call store
+      audioPlaybackService.setOnAiSpeakingChange((speaking) => {
+        useCallStore.getState().setAiSpeaking(speaking);
+      });
 
       await audioService.setupAudioMode();
 
       connectWebSocket(agentId);
 
-      // Start audio recording and pipe chunks to WebSocket
-      const config = audioService.getRecordingConfig((base64: string) => {
-        const { isMuted } = useCallStore.getState();
-        if (!isMuted && wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: 'audio', data: base64 }));
-        }
+      // Start audio recording with VAD and pipe chunks to WebSocket
+      const config = audioService.getRecordingConfig({
+        onAudioChunk: (base64: string) => {
+          const { isMuted } = useCallStore.getState();
+          if (!isMuted && wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'audio', data: base64 }));
+          }
+        },
+        onSpeechStateChange: handleSpeechStateChange,
       });
 
       try {
@@ -130,11 +210,13 @@ export function useVoiceSession() {
         console.error('[VoiceSession] Failed to start audio recording:', e);
       }
     },
-    [connectWebSocket, startAudioRecording]
+    [connectWebSocket, startAudioRecording, handleSpeechStateChange]
   );
 
   const endCall = useCallback(async () => {
     isEndingRef.current = true;
+
+    audioPlaybackService.flush();
 
     try {
       await stopAudioRecording();
@@ -147,14 +229,18 @@ export function useVoiceSession() {
     }
 
     cleanup();
+    audioPlaybackService.destroy();
     agentIdRef.current = null;
   }, [stopAudioRecording, cleanup]);
 
   const toggleMute = useCallback(() => {
     useCallStore.getState().toggleMute();
-    // When muted, we stop sending audio chunks but keep the WebSocket alive.
-    // The audio recording continues but chunks are not sent (handled by isMuted check
-    // in the audio chunk callback if needed in the future).
+  }, []);
+
+  const toggleSpeaker = useCallback(async () => {
+    const newSpeaker = !useCallStore.getState().isSpeaker;
+    useCallStore.getState().toggleSpeaker();
+    await audioService.setSpeakerMode(newSpeaker);
   }, []);
 
   // Cleanup on unmount
@@ -162,6 +248,7 @@ export function useVoiceSession() {
     return () => {
       isEndingRef.current = true;
       cleanup();
+      audioPlaybackService.destroy();
     };
   }, [cleanup]);
 
@@ -171,5 +258,6 @@ export function useVoiceSession() {
     startCall,
     endCall,
     toggleMute,
+    toggleSpeaker,
   };
 }

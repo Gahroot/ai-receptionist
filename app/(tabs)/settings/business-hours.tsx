@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { YStack, XStack, Text, Input, Button, Switch, Separator, Spinner } from 'tamagui';
 import { ArrowLeft } from 'lucide-react-native';
 import { colors } from '../../../constants/theme';
+import api from '../../../services/api';
+import { useAuthStore } from '../../../stores/authStore';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -26,9 +28,28 @@ const DEFAULT_SCHEDULE: Record<string, DaySchedule> = {
 
 export default function BusinessHoursScreen() {
   const router = useRouter();
+  const workspaceId = useAuthStore((s) => s.workspaceId);
   const [is24_7, setIs24_7] = useState(false);
   const [schedule, setSchedule] = useState<Record<string, DaySchedule>>(DEFAULT_SCHEDULE);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    const loadHours = async () => {
+      try {
+        const res = await api.get(`/settings/workspaces/${workspaceId}/business-hours`);
+        const data = res.data;
+        if (data.is_24_7 != null) setIs24_7(data.is_24_7);
+        if (data.schedule) setSchedule(data.schedule);
+      } catch {
+        // Use defaults on error
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadHours();
+  }, [workspaceId]);
 
   const updateDay = (day: string, field: keyof DaySchedule, value: string | boolean) => {
     setSchedule((prev) => ({
@@ -38,12 +59,19 @@ export default function BusinessHoursScreen() {
   };
 
   const handleSave = async () => {
+    if (!workspaceId) return;
     setSaving(true);
-    // TODO: Save to backend when endpoint is available
-    setTimeout(() => {
-      setSaving(false);
+    try {
+      await api.put(`/settings/workspaces/${workspaceId}/business-hours`, {
+        is_24_7: is24_7,
+        schedule,
+      });
       Alert.alert('Saved', 'Business hours updated successfully');
-    }, 500);
+    } catch {
+      Alert.alert('Error', 'Failed to save business hours');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -63,6 +91,11 @@ export default function BusinessHoursScreen() {
         </Text>
       </XStack>
 
+      {loading ? (
+        <YStack flex={1} alignItems="center" justifyContent="center">
+          <Spinner size="large" color={colors.primary} />
+        </YStack>
+      ) : (
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
         {/* 24/7 Toggle */}
         <XStack
@@ -163,6 +196,7 @@ export default function BusinessHoursScreen() {
           </Button>
         </YStack>
       </ScrollView>
+      )}
     </SafeAreaView>
   );
 }

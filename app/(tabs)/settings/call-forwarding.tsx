@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { YStack, XStack, Text, Input, Button, Switch, Spinner } from 'tamagui';
 import { ArrowLeft, Check } from 'lucide-react-native';
 import { colors } from '../../../constants/theme';
+import api from '../../../services/api';
+import { useAuthStore } from '../../../stores/authStore';
 
 const FORWARD_MODES = [
   { id: 'always', label: 'Always', description: 'Forward all calls immediately' },
@@ -15,18 +17,46 @@ const FORWARD_MODES = [
 
 export default function CallForwardingScreen() {
   const router = useRouter();
+  const workspaceId = useAuthStore((s) => s.workspaceId);
   const [enabled, setEnabled] = useState(false);
   const [forwardTo, setForwardTo] = useState('');
   const [mode, setMode] = useState('no_answer');
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    if (!workspaceId) return;
+    const loadForwarding = async () => {
+      try {
+        const res = await api.get(`/settings/workspaces/${workspaceId}/call-forwarding`);
+        const data = res.data;
+        if (data.enabled != null) setEnabled(data.enabled);
+        if (data.forward_to) setForwardTo(data.forward_to);
+        if (data.mode) setMode(data.mode);
+      } catch {
+        // Use defaults on error
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadForwarding();
+  }, [workspaceId]);
+
   const handleSave = async () => {
+    if (!workspaceId) return;
     setSaving(true);
-    // TODO: Save to backend when endpoint is available
-    setTimeout(() => {
-      setSaving(false);
+    try {
+      await api.put(`/settings/workspaces/${workspaceId}/call-forwarding`, {
+        enabled,
+        forward_to: forwardTo,
+        mode,
+      });
       Alert.alert('Saved', 'Call forwarding settings updated');
-    }, 500);
+    } catch {
+      Alert.alert('Error', 'Failed to save call forwarding settings');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -46,6 +76,11 @@ export default function CallForwardingScreen() {
         </Text>
       </XStack>
 
+      {loading ? (
+        <YStack flex={1} alignItems="center" justifyContent="center">
+          <Spinner size="large" color={colors.primary} />
+        </YStack>
+      ) : (
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
         {/* Enable Toggle */}
         <XStack
@@ -144,6 +179,7 @@ export default function CallForwardingScreen() {
           </Button>
         </YStack>
       </ScrollView>
+      )}
     </SafeAreaView>
   );
 }

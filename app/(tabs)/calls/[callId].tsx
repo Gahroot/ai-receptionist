@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ActivityIndicator } from 'react-native';
+import { ActivityIndicator, Alert } from 'react-native';
 import { YStack, XStack, Text, Button, ScrollView, Separator } from 'tamagui';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -76,6 +76,8 @@ export default function CallDetailScreen() {
   const [call, setCall] = useState<CallResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+
+  const [callingBack, setCallingBack] = useState(false);
 
   // Audio state
   const soundRef = useRef<Audio.Sound | null>(null);
@@ -422,8 +424,24 @@ export default function CallDetailScreen() {
                 backgroundColor={colors.primaryLight}
                 pressStyle={{ backgroundColor: colors.primary }}
                 icon={<Phone size={20} color={colors.primary} />}
-                onPress={() => {
-                  // Would initiate a call back
+                disabled={callingBack}
+                onPress={async () => {
+                  if (!workspaceId || !call) return;
+                  setCallingBack(true);
+                  try {
+                    const customerNumber = call.direction === 'inbound' ? call.from_number : call.to_number;
+                    const workspaceNumber = call.direction === 'inbound' ? call.to_number : call.from_number;
+                    const res = await api.post(`/workspaces/${workspaceId}/calls`, {
+                      to_number: customerNumber,
+                      from_phone_number: workspaceNumber,
+                      agent_id: call.agent_id,
+                    });
+                    router.push(`/call/${res.data.id}`);
+                  } catch {
+                    Alert.alert('Error', 'Failed to initiate call back');
+                  } finally {
+                    setCallingBack(false);
+                  }
                 }}
               />
               <Text fontSize={12} color={colors.textSecondary}>

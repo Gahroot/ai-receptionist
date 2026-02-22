@@ -1,27 +1,70 @@
 import { useState } from 'react';
-import { ScrollView } from 'react-native';
+import { ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { YStack, XStack, Text, Input, Button } from 'tamagui';
 import { ArrowLeft, Check, Phone } from 'lucide-react-native';
 import { colors } from '../../../constants/theme';
+import api from '../../../services/api';
+import { useAuthStore } from '../../../stores/authStore';
 
-const MOCK_NUMBERS = [
-  { number: '+1 (555) 100-2001', area: 'New York, NY' },
-  { number: '+1 (555) 100-2002', area: 'New York, NY' },
-  { number: '+1 (555) 200-3001', area: 'Los Angeles, CA' },
-  { number: '+1 (555) 200-3002', area: 'Los Angeles, CA' },
-  { number: '+1 (555) 300-4001', area: 'Chicago, IL' },
-];
+interface PhoneNumberResult {
+  phone_number: string;
+  friendly_name?: string;
+  locality?: string;
+  region?: string;
+}
 
 export default function PhoneNumberScreen() {
   const router = useRouter();
+  const { workspaceId } = useAuthStore();
   const [areaCode, setAreaCode] = useState('');
+  const [numbers, setNumbers] = useState<PhoneNumberResult[]>([]);
   const [searched, setSearched] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [purchasing, setPurchasing] = useState(false);
   const [selectedNumber, setSelectedNumber] = useState('');
 
-  const handleSearch = () => {
-    setSearched(true);
+  const handleSearch = async () => {
+    if (!workspaceId) {
+      Alert.alert('Error', 'No workspace found. Please go back and set up your business first.');
+      return;
+    }
+    setSearching(true);
+    setSelectedNumber('');
+    try {
+      const res = await api.post(`/workspaces/${workspaceId}/phone-numbers/search`, {
+        country: 'US',
+        area_code: areaCode || undefined,
+        limit: 10,
+      });
+      const data = res.data;
+      setNumbers(Array.isArray(data) ? data : data.items || []);
+      setSearched(true);
+    } catch (err: any) {
+      Alert.alert('Error', err?.response?.data?.detail || 'Failed to search for numbers.');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleContinue = async () => {
+    if (!selectedNumber) return;
+    if (!workspaceId) {
+      Alert.alert('Error', 'No workspace found.');
+      return;
+    }
+    setPurchasing(true);
+    try {
+      await api.post(`/workspaces/${workspaceId}/phone-numbers/purchase`, {
+        phone_number: selectedNumber,
+      });
+      router.push('/(auth)/onboarding/greeting');
+    } catch (err: any) {
+      Alert.alert('Error', err?.response?.data?.detail || 'Failed to purchase number.');
+    } finally {
+      setPurchasing(false);
+    }
   };
 
   return (
@@ -76,57 +119,74 @@ export default function PhoneNumberScreen() {
                 fontWeight="600"
                 pressStyle={{ opacity: 0.8 }}
                 onPress={handleSearch}
+                disabled={searching}
+                opacity={searching ? 0.6 : 1}
               >
-                Search
+                {searching ? 'Searching...' : 'Search'}
               </Button>
             </XStack>
           </YStack>
 
+          {/* Loading indicator */}
+          {searching && (
+            <YStack alignItems="center" paddingVertical="$4">
+              <ActivityIndicator size="large" color={colors.primary} />
+            </YStack>
+          )}
+
           {/* Available Numbers */}
-          {searched && (
+          {searched && !searching && (
             <YStack gap="$2">
               <Text fontSize={14} fontWeight="600" color={colors.textPrimary}>
                 Available Numbers
               </Text>
-              {MOCK_NUMBERS.map((item) => (
-                <XStack
-                  key={item.number}
-                  padding="$3"
-                  borderRadius="$3"
-                  borderWidth={2}
-                  borderColor={selectedNumber === item.number ? colors.primary : colors.borderLight}
-                  backgroundColor={selectedNumber === item.number ? colors.primaryLight : colors.background}
-                  alignItems="center"
-                  gap="$3"
-                  pressStyle={{ backgroundColor: colors.backgroundSecondary }}
-                  onPress={() => setSelectedNumber(item.number)}
-                >
-                  <YStack
-                    width={40}
-                    height={40}
-                    borderRadius={20}
-                    backgroundColor={
-                      selectedNumber === item.number ? colors.primary : colors.backgroundSecondary
-                    }
+              {numbers.length === 0 ? (
+                <Text fontSize={14} color={colors.textSecondary} paddingVertical="$2">
+                  No numbers found. Try a different area code.
+                </Text>
+              ) : (
+                numbers.map((item) => (
+                  <XStack
+                    key={item.phone_number}
+                    padding="$3"
+                    borderRadius="$3"
+                    borderWidth={2}
+                    borderColor={selectedNumber === item.phone_number ? colors.primary : colors.borderLight}
+                    backgroundColor={selectedNumber === item.phone_number ? colors.primaryLight : colors.background}
                     alignItems="center"
-                    justifyContent="center"
+                    gap="$3"
+                    pressStyle={{ backgroundColor: colors.backgroundSecondary }}
+                    onPress={() => setSelectedNumber(item.phone_number)}
                   >
-                    <Phone
-                      size={18}
-                      color={selectedNumber === item.number ? '#FFFFFF' : colors.textSecondary}
-                    />
-                  </YStack>
-                  <YStack flex={1} gap="$1">
-                    <Text fontSize={16} fontWeight="600" color={colors.textPrimary}>
-                      {item.number}
-                    </Text>
-                    <Text fontSize={13} color={colors.textSecondary}>
-                      {item.area}
-                    </Text>
-                  </YStack>
-                  {selectedNumber === item.number && <Check size={20} color={colors.primary} />}
-                </XStack>
-              ))}
+                    <YStack
+                      width={40}
+                      height={40}
+                      borderRadius={20}
+                      backgroundColor={
+                        selectedNumber === item.phone_number ? colors.primary : colors.backgroundSecondary
+                      }
+                      alignItems="center"
+                      justifyContent="center"
+                    >
+                      <Phone
+                        size={18}
+                        color={selectedNumber === item.phone_number ? '#FFFFFF' : colors.textSecondary}
+                      />
+                    </YStack>
+                    <YStack flex={1} gap="$1">
+                      <Text fontSize={16} fontWeight="600" color={colors.textPrimary}>
+                        {item.friendly_name || item.phone_number}
+                      </Text>
+                      {(item.locality || item.region) && (
+                        <Text fontSize={13} color={colors.textSecondary}>
+                          {[item.locality, item.region].filter(Boolean).join(', ')}
+                        </Text>
+                      )}
+                    </YStack>
+                    {selectedNumber === item.phone_number && <Check size={20} color={colors.primary} />}
+                  </XStack>
+                ))
+              )}
             </YStack>
           )}
 
@@ -138,12 +198,12 @@ export default function PhoneNumberScreen() {
             borderRadius="$4"
             fontWeight="600"
             pressStyle={{ opacity: 0.8 }}
-            onPress={() => router.push('/(auth)/onboarding/greeting')}
-            disabled={!selectedNumber && searched}
-            opacity={!selectedNumber && searched ? 0.5 : 1}
+            onPress={handleContinue}
+            disabled={(searched && !selectedNumber) || purchasing}
+            opacity={(searched && !selectedNumber) || purchasing ? 0.5 : 1}
             marginTop="$2"
           >
-            Continue
+            {purchasing ? 'Purchasing...' : 'Continue'}
           </Button>
         </YStack>
       </ScrollView>

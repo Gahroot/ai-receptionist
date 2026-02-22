@@ -66,6 +66,19 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: async () => {
+        // Unregister push token before clearing auth
+        try {
+          const { useNotificationStore } = await import('./notificationStore');
+          const { unregisterToken } = await import('../services/notificationService');
+          const token = useNotificationStore.getState().expoPushToken;
+          if (token) {
+            await unregisterToken(token);
+            useNotificationStore.getState().reset();
+          }
+        } catch {
+          // Don't block logout if token cleanup fails
+        }
+
         await SecureStore.deleteItemAsync('access_token');
         await SecureStore.deleteItemAsync('refresh_token');
         set({

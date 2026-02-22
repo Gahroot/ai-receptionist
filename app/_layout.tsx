@@ -3,10 +3,13 @@ import { Stack } from 'expo-router';
 import { TamaguiProvider } from 'tamagui';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '../stores/authStore';
+import { useNotifications } from '../hooks/useNotifications';
 import tamaguiConfig from '../tamagui.config';
 
 export default function RootLayout() {
   const { isAuthenticated, isLoading, initialize } = useAuthStore();
+
+  useNotifications();
 
   useEffect(() => {
     initialize();

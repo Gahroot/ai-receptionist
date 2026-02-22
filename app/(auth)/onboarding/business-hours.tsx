@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { ScrollView } from 'react-native';
+import { ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { YStack, XStack, Text, Input, Button, Switch, Separator } from 'tamagui';
+import { YStack, XStack, Text, Input, Button, Switch, Separator, Spinner } from 'tamagui';
 import { ArrowLeft } from 'lucide-react-native';
 import { colors } from '../../../constants/theme';
+import api from '../../../services/api';
+import { useAuthStore } from '../../../stores/authStore';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -26,8 +28,10 @@ const DEFAULT_SCHEDULE: Record<string, DaySchedule> = {
 
 export default function OnboardingBusinessHoursScreen() {
   const router = useRouter();
+  const workspaceId = useAuthStore((s) => s.workspaceId);
   const [is24_7, setIs24_7] = useState(false);
   const [schedule, setSchedule] = useState<Record<string, DaySchedule>>(DEFAULT_SCHEDULE);
+  const [saving, setSaving] = useState(false);
 
   const updateDay = (day: string, field: keyof DaySchedule, value: string | boolean) => {
     setSchedule((prev) => ({
@@ -151,10 +155,28 @@ export default function OnboardingBusinessHoursScreen() {
             borderRadius="$4"
             fontWeight="600"
             pressStyle={{ opacity: 0.8 }}
-            onPress={() => router.push('/(auth)/onboarding/complete')}
+            disabled={saving}
+            onPress={async () => {
+              if (!workspaceId) {
+                router.push('/(auth)/onboarding/complete');
+                return;
+              }
+              setSaving(true);
+              try {
+                await api.put(`/settings/workspaces/${workspaceId}/business-hours`, {
+                  is_24_7: is24_7,
+                  schedule,
+                });
+                router.push('/(auth)/onboarding/complete');
+              } catch {
+                Alert.alert('Error', 'Failed to save business hours');
+              } finally {
+                setSaving(false);
+              }
+            }}
             marginTop="$2"
           >
-            Continue
+            {saving ? <Spinner color="white" /> : 'Continue'}
           </Button>
         </YStack>
       </ScrollView>

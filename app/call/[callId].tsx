@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { YStack, XStack, Text, H2, Button, ScrollView } from 'tamagui';
@@ -10,13 +10,22 @@ import Animated, {
   withRepeat,
   withTiming,
   Easing,
+  cancelAnimation,
 } from 'react-native-reanimated';
 import { useCallStore } from '../../stores/callStore';
 import { useVoiceSession } from '../../hooks/useVoiceSession';
+import { useAudioPermissions } from '../../hooks/useAudioPermissions';
 import api from '../../services/api';
 import type { Agent } from '../../lib/types';
 
 const CALL_BG = '#0F172A';
+
+// Pulse animation configs per speaking state
+const PULSE_CONFIGS = {
+  aiSpeaking: { duration: 600, scale: 1.4, color: 'rgba(0, 140, 255, 0.4)', innerColor: '#0088FF' },
+  userSpeaking: { duration: 400, scale: 1.3, color: 'rgba(34, 197, 94, 0.35)', innerColor: '#22C55E' },
+  idle: { duration: 2000, scale: 1.1, color: 'rgba(0, 102, 255, 0.3)', innerColor: '#0066FF' },
+};
 
 export default function CallScreen() {
   const router = useRouter();
@@ -30,29 +39,40 @@ export default function CallScreen() {
     duration,
     isMuted,
     isSpeaker,
+    isAiSpeaking,
+    isUserSpeaking,
     transcript,
     startCall: storeStartCall,
     endCall: storeEndCall,
-    toggleSpeaker,
     incrementDuration,
   } = useCallStore();
 
-  const { startCall, endCall, toggleMute } = useVoiceSession();
+  const { startCall, endCall, toggleMute, toggleSpeaker } = useVoiceSession();
+  const { hasPermission, requestPermission } = useAudioPermissions();
 
   const scrollRef = useRef<ScrollView>(null);
   const durationRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasStartedRef = useRef(false);
 
-  // Pulsing animation
+  // Determine current speaking state
+  const speakingState = isAiSpeaking ? 'aiSpeaking' : isUserSpeaking ? 'userSpeaking' : 'idle';
+  const pulseConfig = PULSE_CONFIGS[speakingState];
+
+  // Pulsing animation - reacts to speaking state
   const pulseScale = useSharedValue(1);
 
   useEffect(() => {
+    cancelAnimation(pulseScale);
+    pulseScale.value = 1;
     pulseScale.value = withRepeat(
-      withTiming(1.3, { duration: 1200, easing: Easing.inOut(Easing.ease) }),
+      withTiming(pulseConfig.scale, {
+        duration: pulseConfig.duration,
+        easing: Easing.inOut(Easing.ease),
+      }),
       -1,
       true
     );
-  }, [pulseScale]);
+  }, [speakingState, pulseConfig.scale, pulseConfig.duration, pulseScale]);
 
   const pulseStyle = useAnimatedStyle(() => ({
     transform: [{ scale: pulseScale.value }],
@@ -65,12 +85,36 @@ export default function CallScreen() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Status text based on speaking state
+  const statusText = isAiSpeaking
+    ? 'AI is speaking...'
+    : isUserSpeaking
+      ? 'Listening...'
+      : 'Ready';
+
+  const statusColor = isAiSpeaking
+    ? '#60A5FA'
+    : isUserSpeaking
+      ? '#4ADE80'
+      : '#64748B';
+
   // Start the call on mount
   useEffect(() => {
     if (hasStartedRef.current) return;
     hasStartedRef.current = true;
 
     const initCall = async () => {
+      // Check microphone permission
+      const granted = hasPermission ?? (await requestPermission());
+      if (!granted) {
+        Alert.alert(
+          'Microphone Required',
+          'Voice calls require microphone access.',
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
+        return;
+      }
+
       let agentToUse = routeAgentId;
 
       // If no agentId provided, fetch the first available agent
@@ -153,14 +197,14 @@ export default function CallScreen() {
           </Text>
         </YStack>
 
-        {/* Center - pulsing circle */}
-        <YStack alignItems="center" justifyContent="center" flex={1}>
+        {/* Center - pulsing circle with dynamic state */}
+        <YStack alignItems="center" justifyContent="center" flex={1} gap="$3">
           <Animated.View style={[styles.pulseCircle, pulseStyle]}>
             <YStack
               width={120}
               height={120}
               borderRadius={60}
-              backgroundColor="rgba(0, 102, 255, 0.3)"
+              backgroundColor={pulseConfig.color}
               alignItems="center"
               justifyContent="center"
             >
@@ -168,7 +212,7 @@ export default function CallScreen() {
                 width={80}
                 height={80}
                 borderRadius={40}
-                backgroundColor="#0066FF"
+                backgroundColor={pulseConfig.innerColor}
                 alignItems="center"
                 justifyContent="center"
               >
@@ -178,6 +222,9 @@ export default function CallScreen() {
               </YStack>
             </YStack>
           </Animated.View>
+          <Text color={statusColor} fontSize={13} fontWeight="500">
+            {statusText}
+          </Text>
         </YStack>
 
         {/* Live transcript */}

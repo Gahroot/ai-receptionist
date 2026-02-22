@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { ScrollView, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { YStack, XStack, Text, Input, TextArea, Button } from 'tamagui';
 import { ArrowLeft } from 'lucide-react-native';
 import { colors } from '../../../constants/theme';
+import api from '../../../services/api';
+import { useAuthStore } from '../../../stores/authStore';
 
 const INDUSTRIES = [
   'Healthcare',
@@ -20,9 +22,41 @@ const INDUSTRIES = [
 
 export default function BusinessInfoScreen() {
   const router = useRouter();
+  const { workspaceId, fetchUser } = useAuthStore();
   const [businessName, setBusinessName] = useState('');
   const [industry, setIndustry] = useState('');
   const [description, setDescription] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleContinue = async () => {
+    if (!businessName.trim()) {
+      Alert.alert('Required', 'Please enter your business name.');
+      return;
+    }
+    setSaving(true);
+    try {
+      if (workspaceId) {
+        await api.put(`/workspaces/${workspaceId}`, {
+          name: businessName,
+          description,
+          settings: { industry },
+        });
+      } else {
+        await api.post('/workspaces', {
+          name: businessName,
+          slug: businessName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
+          description,
+          settings: { industry },
+        });
+        await fetchUser();
+      }
+      router.push('/(auth)/onboarding/phone-number');
+    } catch (err: any) {
+      Alert.alert('Error', err?.response?.data?.detail || 'Failed to save business info.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -116,10 +150,12 @@ export default function BusinessInfoScreen() {
               borderRadius="$4"
               fontWeight="600"
               pressStyle={{ opacity: 0.8 }}
-              onPress={() => router.push('/(auth)/onboarding/phone-number')}
+              onPress={handleContinue}
+              disabled={saving}
+              opacity={saving ? 0.6 : 1}
               marginTop="$2"
             >
-              Continue
+              {saving ? 'Saving...' : 'Continue'}
             </Button>
           </YStack>
         </ScrollView>

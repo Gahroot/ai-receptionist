@@ -1,17 +1,49 @@
 import { useState } from 'react';
-import { ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { ScrollView, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { YStack, XStack, Text, TextArea, Button } from 'tamagui';
 import { ArrowLeft, Volume2 } from 'lucide-react-native';
 import { colors } from '../../../constants/theme';
+import api from '../../../services/api';
+import { useAuthStore } from '../../../stores/authStore';
 
 const DEFAULT_GREETING =
   "Hello! Thank you for calling. I'm your AI receptionist. How can I help you today? I can schedule appointments, answer questions about our services, or connect you with a team member.";
 
 export default function GreetingScreen() {
   const router = useRouter();
+  const { workspaceId } = useAuthStore();
   const [greeting, setGreeting] = useState(DEFAULT_GREETING);
+  const [saving, setSaving] = useState(false);
+
+  const handleContinue = async () => {
+    if (!workspaceId) {
+      Alert.alert('Error', 'No workspace found. Please go back and set up your business first.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const agentsRes = await api.get(`/workspaces/${workspaceId}/agents`);
+      const agents = agentsRes.data.items;
+      if (agents.length > 0) {
+        await api.put(`/workspaces/${workspaceId}/agents/${agents[0].id}`, {
+          initial_greeting: greeting,
+        });
+      } else {
+        await api.post(`/workspaces/${workspaceId}/agents`, {
+          name: 'AI Receptionist',
+          initial_greeting: greeting,
+          system_prompt: 'You are a helpful AI receptionist.',
+        });
+      }
+      router.push('/(auth)/onboarding/business-hours');
+    } catch (err: any) {
+      Alert.alert('Error', err?.response?.data?.detail || 'Failed to save greeting.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -92,10 +124,12 @@ export default function GreetingScreen() {
               borderRadius="$4"
               fontWeight="600"
               pressStyle={{ opacity: 0.8 }}
-              onPress={() => router.push('/(auth)/onboarding/business-hours')}
+              onPress={handleContinue}
+              disabled={saving}
+              opacity={saving ? 0.6 : 1}
               marginTop="$2"
             >
-              Continue
+              {saving ? 'Saving...' : 'Continue'}
             </Button>
           </YStack>
         </ScrollView>

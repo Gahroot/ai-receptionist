@@ -32,8 +32,9 @@ export default function AIConfigScreen() {
   const fetchAgent = useCallback(async () => {
     if (!workspaceId) return;
     try {
-      const res = await api.get<Agent[]>(`/workspaces/${workspaceId}/agents`);
-      const active = res.data.find((a) => a.is_active) || res.data[0];
+      const res = await api.get<{ items: Agent[] }>(`/workspaces/${workspaceId}/agents`);
+      const agents = res.data.items ?? res.data;
+      const active = (agents as Agent[]).find((a) => a.is_active) || (agents as Agent[])[0];
       if (active) {
         setAgent(active);
         setVoice(active.voice_id);
