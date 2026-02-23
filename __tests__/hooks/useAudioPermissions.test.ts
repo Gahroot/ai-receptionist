@@ -1,6 +1,6 @@
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { useAudioPermissions } from '@/hooks/useAudioPermissions';
-import { ExpoAudioStreamModule } from '@siteed/expo-audio-stream';
+import { ExpoAudioStreamModule } from '@siteed/expo-audio-studio';
 import { Alert, Linking, Platform } from 'react-native';
 
 const mockGetPermissions = ExpoAudioStreamModule.getPermissionsAsync as jest.Mock;

@@ -29,7 +29,7 @@ assets/                       # App icons, splash screens
 - **UI:** Tamagui v2 RC, Lucide icons, Reanimated, Gesture Handler
 - **State:** Zustand + AsyncStorage + expo-secure-store (auth tokens)
 - **API:** Axios with JWT auth interceptors, WebSocket voice sessions
-- **Audio:** @siteed/expo-audio-stream (PCM16 capture), expo-av (playback)
+- **Audio:** @siteed/expo-audio-studio (PCM16 capture), expo-audio (playback)
 - **Chat:** react-native-gifted-chat
 - **TypeScript:** Strict mode, path alias `@/*` → project root
 

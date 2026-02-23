@@ -1,6 +1,9 @@
 /**
  * WebSocket server for Telnyx media streams.
- * Uses `ws` with `noServer: true`, intercepts HTTP upgrades on /voice/stream/:callControlId.
+ * Uses `ws` with `noServer: true`, intercepts HTTP upgrades on /voice/stream.
+ *
+ * The call control ID is extracted from Telnyx's `start` event rather than
+ * the URL path, avoiding URL-parsing issues with the `v3:` prefix.
  */
 
 import type { Server as HttpServer, IncomingMessage } from 'http';
@@ -11,7 +14,7 @@ import { calls } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { VoiceBridge, activeCalls } from '../services/voiceBridge.js';
 
-const STREAM_PATH_PREFIX = '/voice/stream/';
+const STREAM_PATH = '/voice/stream';
 
 /**
  * Attach the voice stream WebSocket server to an existing HTTP server.
@@ -20,28 +23,57 @@ export function setupWebSocketServer(server: HttpServer): void {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const url = request.url ?? '';
+    const url = (request.url ?? '').split('?')[0];
 
-    if (!url.startsWith(STREAM_PATH_PREFIX)) {
-      // Not our route — let other upgrade handlers deal with it, or destroy
-      socket.destroy();
-      return;
-    }
-
-    const callControlId = url.slice(STREAM_PATH_PREFIX.length).split('?')[0];
-    if (!callControlId) {
+    if (url !== STREAM_PATH) {
       socket.destroy();
       return;
     }
 
     wss.handleUpgrade(request, socket, head, (ws) => {
-      console.log(`[ws] Telnyx stream connected: ${callControlId}`);
+      console.log('[ws] Telnyx stream connected, waiting for start event...');
 
-      // Look up call record and start bridge
-      handleConnection(callControlId, ws).catch((err) => {
-        console.error(`[ws] Bridge setup failed for ${callControlId}:`, err);
-        ws.close();
-      });
+      // Wait for the Telnyx `start` event to identify the call
+      const onMessage = (raw: Buffer) => {
+        let msg: {
+          event: string;
+          stream_id?: string;
+          start?: { call_control_id?: string };
+        };
+        try {
+          msg = JSON.parse(raw.toString());
+        } catch {
+          return;
+        }
+
+        if (msg.event === 'start') {
+          ws.removeListener('message', onMessage);
+
+          const callControlId = msg.start?.call_control_id;
+          if (!callControlId) {
+            console.error('[ws] start event missing call_control_id');
+            ws.close();
+            return;
+          }
+
+          console.log(`[ws] Telnyx stream identified: ${callControlId}`);
+          handleConnection(callControlId, msg.stream_id ?? '', ws).catch((err) => {
+            console.error(`[ws] Bridge setup failed for ${callControlId}:`, err);
+            ws.close();
+          });
+        }
+      };
+
+      ws.on('message', onMessage);
+
+      // Timeout if no start event within 10s
+      setTimeout(() => {
+        ws.removeListener('message', onMessage);
+        if (ws.readyState === ws.OPEN && !ws.listenerCount('message')) {
+          console.error('[ws] Timed out waiting for start event');
+          ws.close();
+        }
+      }, 10000);
     });
   });
 
@@ -50,6 +82,7 @@ export function setupWebSocketServer(server: HttpServer): void {
 
 async function handleConnection(
   callControlId: string,
+  streamId: string,
   ws: import('ws').WebSocket,
 ): Promise<void> {
   // Look up call record by telnyxCallControlId
@@ -82,5 +115,5 @@ async function handleConnection(
   );
 
   activeCalls.set(callControlId, bridge);
-  await bridge.start(ws);
+  await bridge.start(ws, streamId);
 }

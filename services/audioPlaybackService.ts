@@ -1,8 +1,8 @@
-import { Audio, AVPlaybackStatus } from 'expo-av';
+import { createAudioPlayer, AudioPlayer } from 'expo-audio';
 
 /**
  * AudioPlaybackService — queues incoming PCM16/24kHz chunks,
- * wraps them in WAV headers, and plays them sequentially via expo-av.
+ * wraps them in WAV headers, and plays them sequentially via expo-audio.
  *
  * Uses double-buffered playback (A/B slots) to minimize gaps between chunks.
  */
@@ -89,8 +89,10 @@ class AudioPlaybackService {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Double-buffer playback slots
-  private soundA: Audio.Sound | null = null;
-  private soundB: Audio.Sound | null = null;
+  private soundA: AudioPlayer | null = null;
+  private soundB: AudioPlayer | null = null;
+  private subscriptionA: { remove(): void } | null = null;
+  private subscriptionB: { remove(): void } | null = null;
   private isPlaying = false;
   private destroyed = false;
 
@@ -183,36 +185,35 @@ class AudioPlaybackService {
     const uri = this.playbackQueue.shift()!;
 
     try {
-      // Unload previous sound in slot A
+      // Remove previous player in slot A
       if (this.soundA) {
-        await this.soundA.unloadAsync().catch(() => {});
+        this.subscriptionA?.remove();
+        this.subscriptionA = null;
+        this.soundA.remove();
         this.soundA = null;
       }
 
-      // Create and play sound A
-      const { sound } = await Audio.Sound.createAsync(
-        { uri },
-        { shouldPlay: true }
-      );
-      this.soundA = sound;
+      // Create and play player A
+      const playerA = createAudioPlayer({ uri });
+      this.soundA = playerA;
+      playerA.play();
 
-      // Pre-load sound B while A plays
+      // Pre-load player B while A plays
       if (this.playbackQueue.length > 0) {
         const nextUri = this.playbackQueue.shift()!;
         if (this.soundB) {
-          await this.soundB.unloadAsync().catch(() => {});
+          this.subscriptionB?.remove();
+          this.subscriptionB = null;
+          this.soundB.remove();
         }
-        const { sound: nextSound } = await Audio.Sound.createAsync(
-          { uri: nextUri },
-          { shouldPlay: false }
-        );
-        this.soundB = nextSound;
+        const playerB = createAudioPlayer({ uri: nextUri });
+        this.soundB = playerB;
       }
 
       // Wait for A to finish
       await new Promise<void>((resolve) => {
-        sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
-          if (status.isLoaded && status.didJustFinish) {
+        this.subscriptionA = playerA.addListener('playbackStatusUpdate', () => {
+          if (!playerA.playing && playerA.currentTime > 0) {
             resolve();
           }
         });
@@ -220,22 +221,23 @@ class AudioPlaybackService {
 
       // Now play B if loaded
       if (this.soundB && !this.destroyed) {
-        await this.soundB.playAsync().catch(() => {});
-
-        // Swap: B becomes the current, recycle A slot
         const playing = this.soundB;
         this.soundB = null;
+        this.subscriptionB = null;
+
+        playing.play();
 
         // While B plays, continue with the rest of the queue
-        await new Promise<void>((resolve) => {
-          playing.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
-            if (status.isLoaded && status.didJustFinish) {
-              resolve();
+        const bSub = await new Promise<{ remove(): void }>((resolve) => {
+          const sub = playing.addListener('playbackStatusUpdate', () => {
+            if (!playing.playing && playing.currentTime > 0) {
+              resolve(sub);
             }
           });
         });
 
-        await playing.unloadAsync().catch(() => {});
+        bSub.remove();
+        playing.remove();
       }
 
       // Continue playing queue
@@ -265,17 +267,21 @@ class AudioPlaybackService {
     this.accumulationSize = 0;
     this.playbackQueue = [];
 
-    // Stop and unload sounds
+    // Stop and remove players
     this.isPlaying = false;
     this._setAiSpeaking(false);
     if (this.soundA) {
-      this.soundA.stopAsync().catch(() => {});
-      this.soundA.unloadAsync().catch(() => {});
+      this.subscriptionA?.remove();
+      this.subscriptionA = null;
+      this.soundA.pause();
+      this.soundA.remove();
       this.soundA = null;
     }
     if (this.soundB) {
-      this.soundB.stopAsync().catch(() => {});
-      this.soundB.unloadAsync().catch(() => {});
+      this.subscriptionB?.remove();
+      this.subscriptionB = null;
+      this.soundB.pause();
+      this.soundB.remove();
       this.soundB = null;
     }
   }

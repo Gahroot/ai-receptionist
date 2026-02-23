@@ -1,8 +1,8 @@
-import { Audio } from 'expo-av';
+import { setAudioModeAsync } from 'expo-audio';
 import audioService, { RECORDING_CONFIG } from '@/services/audioService';
 import { Platform } from 'react-native';
 
-const mockSetAudioMode = Audio.setAudioModeAsync as jest.Mock;
+const mockSetAudioMode = setAudioModeAsync as jest.Mock;
 
 describe('RECORDING_CONFIG', () => {
   test('has correct sampleRate (24kHz for Grok)', () => {
@@ -36,38 +36,36 @@ describe('audioService.setupAudioMode', () => {
     jest.clearAllMocks();
   });
 
-  test('calls setAudioModeAsync with earpiece mode by default', async () => {
+  test('calls setAudioModeAsync with correct parameters by default', async () => {
     await audioService.setupAudioMode();
 
     expect(mockSetAudioMode).toHaveBeenCalledTimes(1);
     expect(mockSetAudioMode).toHaveBeenCalledWith({
-      staysActiveInBackground: true,
-      playsInSilentModeIOS: true,
-      allowsRecordingIOS: true,
-      playThroughEarpieceAndroid: true,
+      shouldPlayInBackground: true,
+      playsInSilentMode: true,
+      allowsRecording: true,
     });
   });
 
-  test('calls setAudioModeAsync with earpiece when speakerMode is false', async () => {
+  test('calls setAudioModeAsync when speakerMode is false', async () => {
     await audioService.setupAudioMode(false);
 
     expect(mockSetAudioMode).toHaveBeenCalledTimes(1);
-    expect(mockSetAudioMode).toHaveBeenCalledWith(
-      expect.objectContaining({
-        playThroughEarpieceAndroid: true,
-      })
-    );
+    expect(mockSetAudioMode).toHaveBeenCalledWith({
+      shouldPlayInBackground: true,
+      playsInSilentMode: true,
+      allowsRecording: true,
+    });
   });
 
-  test('calls setAudioModeAsync with speaker when speakerMode is true', async () => {
+  test('calls setAudioModeAsync when speakerMode is true', async () => {
     await audioService.setupAudioMode(true);
 
     expect(mockSetAudioMode).toHaveBeenCalledTimes(1);
     expect(mockSetAudioMode).toHaveBeenCalledWith({
-      staysActiveInBackground: true,
-      playsInSilentModeIOS: true,
-      allowsRecordingIOS: true,
-      playThroughEarpieceAndroid: false,
+      shouldPlayInBackground: true,
+      playsInSilentMode: true,
+      allowsRecording: true,
     });
   });
 });
@@ -77,27 +75,25 @@ describe('audioService.setSpeakerMode', () => {
     jest.clearAllMocks();
   });
 
-  test('sets speaker mode on (playThroughEarpieceAndroid = false)', async () => {
+  test('sets speaker mode on', async () => {
     await audioService.setSpeakerMode(true);
 
     expect(mockSetAudioMode).toHaveBeenCalledTimes(1);
     expect(mockSetAudioMode).toHaveBeenCalledWith({
-      staysActiveInBackground: true,
-      playsInSilentModeIOS: true,
-      allowsRecordingIOS: true,
-      playThroughEarpieceAndroid: false,
+      shouldPlayInBackground: true,
+      playsInSilentMode: true,
+      allowsRecording: true,
     });
   });
 
-  test('sets speaker mode off (playThroughEarpieceAndroid = true)', async () => {
+  test('sets speaker mode off', async () => {
     await audioService.setSpeakerMode(false);
 
     expect(mockSetAudioMode).toHaveBeenCalledTimes(1);
     expect(mockSetAudioMode).toHaveBeenCalledWith({
-      staysActiveInBackground: true,
-      playsInSilentModeIOS: true,
-      allowsRecordingIOS: true,
-      playThroughEarpieceAndroid: true,
+      shouldPlayInBackground: true,
+      playsInSilentMode: true,
+      allowsRecording: true,
     });
   });
 });

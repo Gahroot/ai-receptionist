@@ -1,32 +1,33 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { Audio } from 'expo-av';
+import { useState, useCallback, useEffect } from 'react';
+import { useAudioPlayer } from 'expo-audio';
 
 export function useAudioPreview() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const soundRef = useRef<Audio.Sound | null>(null);
 
-  const unloadSound = useCallback(async () => {
-    if (soundRef.current) {
-      try {
-        await soundRef.current.unloadAsync();
-      } catch {
-        // ignore cleanup errors
+  const player = useAudioPlayer(null);
+
+  useEffect(() => {
+    const subscription = player.addListener('playbackStatusUpdate', () => {
+      if (!player.playing && playingId && player.currentTime > 0) {
+        setPlayingId(null);
       }
-      soundRef.current = null;
-    }
-  }, []);
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [player, playingId]);
 
   const stop = useCallback(async () => {
-    await unloadSound();
+    player.pause();
     setPlayingId(null);
     setIsLoading(false);
-  }, [unloadSound]);
+  }, [player]);
 
   const play = useCallback(
     async (voiceId: string, url: string) => {
       // Stop any currently playing preview
-      await unloadSound();
+      player.pause();
 
       if (playingId === voiceId) {
         // Toggle off if same voice
@@ -38,32 +39,16 @@ export function useAudioPreview() {
       setPlayingId(voiceId);
 
       try {
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: url },
-          { shouldPlay: true },
-          (status) => {
-            if (status.isLoaded && status.didJustFinish) {
-              setPlayingId(null);
-              soundRef.current = null;
-            }
-          }
-        );
-        soundRef.current = sound;
+        player.replace({ uri: url });
+        player.play();
       } catch {
         setPlayingId(null);
       } finally {
         setIsLoading(false);
       }
     },
-    [playingId, unloadSound]
+    [playingId, player]
   );
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      unloadSound();
-    };
-  }, [unloadSound]);
 
   return { playingId, isLoading, play, stop };
 }

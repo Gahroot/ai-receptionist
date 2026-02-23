@@ -10,7 +10,7 @@ import { db } from '../db/index.js';
 import { phoneNumbers, agents, contacts, calls } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { telnyxWebhookMiddleware } from '../lib/telnyxWebhook.js';
-import { answerCall, startStreaming, buildStreamUrl } from '../services/telnyxApi.js';
+import { answerCall, buildStreamUrl } from '../services/telnyxApi.js';
 import { sendPushToWorkspace } from '../services/pushNotifications.js';
 import { activeCalls } from '../services/voiceBridge.js';
 
@@ -65,6 +65,15 @@ router.post('/', async (req, res) => {
       case 'call.answered':
       case 'streaming.started':
         console.log(`[webhook] ${eventType} — no action needed`);
+        break;
+
+      case 'streaming.failed':
+        console.error(`[webhook] Streaming failed for ${callControlId}`);
+        await handleStreamingFailed(callControlId);
+        break;
+
+      case 'streaming.stopped':
+        console.log(`[webhook] Streaming stopped for ${callControlId}`);
         break;
 
       default:
@@ -179,13 +188,10 @@ async function handleCallInitiated(payload: Record<string, unknown> & {
     { callId: callRecord.id, type: 'incoming_call' },
   ).catch((err) => console.error('[webhook] Push notification failed:', err));
 
-  // 6. Answer call + start streaming
-  console.log(`[webhook] Answering call ${callControlId}...`);
-  await answerCall(callControlId);
-
-  const streamUrl = buildStreamUrl(callControlId);
-  console.log(`[webhook] Starting streaming → ${streamUrl}`);
-  await startStreaming(callControlId, streamUrl);
+  // 6. Answer call + start streaming in a single command
+  const streamUrl = buildStreamUrl();
+  console.log(`[webhook] Answering call ${callControlId} with streaming → ${streamUrl}`);
+  await answerCall(callControlId, streamUrl);
 }
 
 async function handleCallHangup(payload: Record<string, unknown> & {
@@ -212,6 +218,22 @@ async function handleCallHangup(payload: Record<string, unknown> & {
     await db
       .update(calls)
       .set({ status })
+      .where(eq(calls.telnyxCallControlId, callControlId));
+  } catch (err) {
+    console.error(`[webhook] Failed to update call status:`, err);
+  }
+}
+
+async function handleStreamingFailed(callControlId: string): Promise<void> {
+  const bridge = activeCalls.get(callControlId);
+  if (bridge) {
+    await bridge.stop();
+  }
+
+  try {
+    await db
+      .update(calls)
+      .set({ status: 'failed' })
       .where(eq(calls.telnyxCallControlId, callControlId));
   } catch (err) {
     console.error(`[webhook] Failed to update call status:`, err);

@@ -7,7 +7,7 @@
  * We also directly test WAV construction by decoding the data URIs produced by enqueue().
  */
 
-import { Audio } from 'expo-av';
+import { createAudioPlayer } from 'expo-audio';
 
 // We need to get a fresh instance for each test, so we re-import
 // But the module exports a singleton, so we need to use jest.isolateModules or reset it
@@ -97,17 +97,16 @@ describe('audioPlaybackService', () => {
 
   describe('createWavDataUri (tested via enqueue + flush timer)', () => {
     test('generates valid data URI starting with data:audio/wav;base64,', () => {
-      // Mock Audio.Sound.createAsync to capture the URI
+      // Mock createAudioPlayer to capture the URI
       let capturedUri: string | undefined;
-      (Audio.Sound.createAsync as jest.Mock).mockImplementation(async (source: { uri: string }) => {
+      (createAudioPlayer as jest.Mock).mockImplementation((source: { uri: string }) => {
         capturedUri = source.uri;
-        const mockSound = {
-          playAsync: jest.fn().mockResolvedValue({}),
-          stopAsync: jest.fn().mockResolvedValue({}),
-          unloadAsync: jest.fn().mockResolvedValue({}),
-          setOnPlaybackStatusUpdate: jest.fn(),
+        return {
+          play: jest.fn(), pause: jest.fn(), remove: jest.fn(),
+          replace: jest.fn(), seekTo: jest.fn(),
+          addListener: jest.fn(() => ({ remove: jest.fn() })),
+          playing: false, currentTime: 0, duration: 0,
         };
-        return { sound: mockSound };
       });
 
       // Enqueue a small chunk (below BUFFER_THRESHOLD of 9600)
@@ -124,15 +123,14 @@ describe('audioPlaybackService', () => {
 
     test('WAV header has correct RIFF marker, sample rate, channels, bit depth', () => {
       let capturedUri: string | undefined;
-      (Audio.Sound.createAsync as jest.Mock).mockImplementation(async (source: { uri: string }) => {
+      (createAudioPlayer as jest.Mock).mockImplementation((source: { uri: string }) => {
         capturedUri = source.uri;
-        const mockSound = {
-          playAsync: jest.fn().mockResolvedValue({}),
-          stopAsync: jest.fn().mockResolvedValue({}),
-          unloadAsync: jest.fn().mockResolvedValue({}),
-          setOnPlaybackStatusUpdate: jest.fn(),
+        return {
+          play: jest.fn(), pause: jest.fn(), remove: jest.fn(),
+          replace: jest.fn(), seekTo: jest.fn(),
+          addListener: jest.fn(() => ({ remove: jest.fn() })),
+          playing: false, currentTime: 0, duration: 0,
         };
-        return { sound: mockSound };
       });
 
       const pcmByteLength = 100;
@@ -200,8 +198,8 @@ describe('audioPlaybackService', () => {
 
       audioPlaybackService.enqueue(largeChunk);
 
-      // Should have triggered createAsync since threshold was reached
-      expect(Audio.Sound.createAsync).toHaveBeenCalled();
+      // Should have triggered createAudioPlayer since threshold was reached
+      expect(createAudioPlayer).toHaveBeenCalled();
     });
 
     test('enqueue flushes after timeout for small chunks', () => {
@@ -209,13 +207,13 @@ describe('audioPlaybackService', () => {
       audioPlaybackService.enqueue(smallChunk);
 
       // Should not have flushed immediately
-      expect(Audio.Sound.createAsync).not.toHaveBeenCalled();
+      expect(createAudioPlayer).not.toHaveBeenCalled();
 
       // Advance past FLUSH_TIMEOUT_MS (150ms)
       jest.advanceTimersByTime(200);
 
       // Now it should have flushed
-      expect(Audio.Sound.createAsync).toHaveBeenCalled();
+      expect(createAudioPlayer).toHaveBeenCalled();
     });
 
     test('enqueue does nothing after destroy', () => {
@@ -226,7 +224,7 @@ describe('audioPlaybackService', () => {
 
       jest.advanceTimersByTime(200);
 
-      expect(Audio.Sound.createAsync).not.toHaveBeenCalled();
+      expect(createAudioPlayer).not.toHaveBeenCalled();
     });
   });
 
@@ -243,17 +241,17 @@ describe('audioPlaybackService', () => {
       // Advance timers - nothing should happen since flush cleared everything
       jest.advanceTimersByTime(200);
 
-      expect(Audio.Sound.createAsync).not.toHaveBeenCalled();
+      expect(createAudioPlayer).not.toHaveBeenCalled();
     });
 
-    test('flush stops and unloads any playing sounds', () => {
-      const mockSound = {
-        playAsync: jest.fn().mockResolvedValue({}),
-        stopAsync: jest.fn().mockResolvedValue({}),
-        unloadAsync: jest.fn().mockResolvedValue({}),
-        setOnPlaybackStatusUpdate: jest.fn(),
+    test('flush stops and removes any playing sounds', () => {
+      const mockPlayer = {
+        play: jest.fn(), pause: jest.fn(), remove: jest.fn(),
+        replace: jest.fn(), seekTo: jest.fn(),
+        addListener: jest.fn(() => ({ remove: jest.fn() })),
+        playing: false, currentTime: 0, duration: 0,
       };
-      (Audio.Sound.createAsync as jest.Mock).mockResolvedValue({ sound: mockSound });
+      (createAudioPlayer as jest.Mock).mockReturnValue(mockPlayer);
 
       // Enqueue a large chunk to trigger immediate playback
       const largeChunk = createPcm16Base64(10000);
@@ -262,8 +260,8 @@ describe('audioPlaybackService', () => {
       // Flush to stop everything
       audioPlaybackService.flush();
 
-      // The sounds should have stop/unload called
-      // (This depends on whether a sound was actually created before flush)
+      // The player should have pause/remove called
+      // (This depends on whether a player was actually created before flush)
     });
   });
 
@@ -281,8 +279,8 @@ describe('audioPlaybackService', () => {
 
       jest.advanceTimersByTime(200);
 
-      // createAsync should not have been called (destroyed before flush, and new enqueue ignored)
-      expect(Audio.Sound.createAsync).not.toHaveBeenCalled();
+      // createAudioPlayer should not have been called (destroyed before flush, and new enqueue ignored)
+      expect(createAudioPlayer).not.toHaveBeenCalled();
     });
 
     test('destroy clears the onAiSpeakingChange callback', () => {
@@ -311,14 +309,14 @@ describe('audioPlaybackService', () => {
 
       // Should be ignored
       audioPlaybackService.enqueue(createPcm16Base64(10000));
-      expect(Audio.Sound.createAsync).not.toHaveBeenCalled();
+      expect(createAudioPlayer).not.toHaveBeenCalled();
 
       // Reset
       audioPlaybackService.reset();
 
       // Now enqueue should work again
       audioPlaybackService.enqueue(createPcm16Base64(10000));
-      expect(Audio.Sound.createAsync).toHaveBeenCalled();
+      expect(createAudioPlayer).toHaveBeenCalled();
     });
   });
 
@@ -334,7 +332,7 @@ describe('audioPlaybackService', () => {
       audioPlaybackService.enqueue(largeChunk);
 
       // The _playNext method is async but _setAiSpeaking(true) happens synchronously inside it.
-      // Since Audio.Sound.createAsync is mocked to resolve immediately,
+      // Since createAudioPlayer is mocked to return immediately,
       // the speaking callback may be called after the microtask resolves.
       // We need to flush promises.
       return new Promise<void>((resolve) => {

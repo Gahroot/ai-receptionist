@@ -3,12 +3,13 @@ import { KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { YStack, XStack, Input, Button, Text, H1, Paragraph, Spinner } from 'tamagui';
 import { Phone } from 'lucide-react-native';
+import { isAxiosError } from 'axios';
 import { useAuthStore } from '../../stores/authStore';
 import { colors } from '../../constants/theme';
 
 const passwordInputProps = Platform.OS === 'web'
-  ? { type: 'password' } as any
-  : { secureTextEntry: true };
+  ? ({ type: 'password' } as { type: string })
+  : { secureTextEntry: true as const };
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -27,8 +28,12 @@ export default function LoginScreen() {
     setError('');
     try {
       await login(email, password);
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Login failed. Please try again.');
+    } catch (e: unknown) {
+      if (isAxiosError(e)) {
+        setError(e.response?.data?.detail || 'Login failed. Please try again.');
+      } else {
+        setError('Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

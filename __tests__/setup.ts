@@ -46,24 +46,21 @@ jest.mock('expo-notifications', () => ({
   AndroidImportance: { MAX: 5, HIGH: 4, DEFAULT: 3 },
 }));
 
-jest.mock('expo-av', () => {
-  const mockSound = {
-    playAsync: jest.fn().mockResolvedValue(undefined),
-    stopAsync: jest.fn().mockResolvedValue(undefined),
-    unloadAsync: jest.fn().mockResolvedValue(undefined),
-    setOnPlaybackStatusUpdate: jest.fn(),
-  };
-  return {
-    Audio: {
-      setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
-      Sound: {
-        createAsync: jest.fn().mockResolvedValue({ sound: mockSound, status: { isLoaded: true } }),
-      },
-    },
-    InterruptionModeIOS: { DoNotMix: 1, DuckOthers: 2, MixWithOthers: 0 },
-    InterruptionModeAndroid: { DoNotMix: 1, DuckOthers: 2 },
-  };
-});
+jest.mock('expo-audio', () => ({
+  createAudioPlayer: jest.fn(() => ({
+    play: jest.fn(), pause: jest.fn(), remove: jest.fn(),
+    replace: jest.fn(), seekTo: jest.fn(),
+    addListener: jest.fn(() => ({ remove: jest.fn() })),
+    playing: false, currentTime: 0, duration: 0,
+  })),
+  useAudioPlayer: jest.fn(() => ({
+    play: jest.fn(), pause: jest.fn(), remove: jest.fn(),
+    replace: jest.fn(), seekTo: jest.fn(),
+    addListener: jest.fn(() => ({ remove: jest.fn() })),
+    playing: false, currentTime: 0, duration: 0,
+  })),
+  setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
+}));
 
 jest.mock('expo-device', () => ({
   isDevice: true,
@@ -92,7 +89,7 @@ jest.mock('expo-router', () => ({
   usePathname: jest.fn(() => '/'),
 }));
 
-jest.mock('@siteed/expo-audio-stream', () => ({
+jest.mock('@siteed/expo-audio-studio', () => ({
   useAudioRecorder: jest.fn(() => ({
     startRecording: jest.fn().mockResolvedValue(undefined),
     stopRecording: jest.fn().mockResolvedValue(undefined),

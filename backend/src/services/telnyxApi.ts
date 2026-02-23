@@ -23,10 +23,23 @@ async function telnyxPost(path: string, body?: Record<string, unknown>): Promise
   }
 }
 
-/** Answer an incoming call. */
-export async function answerCall(callControlId: string): Promise<void> {
-  await telnyxPost(`/calls/${callControlId}/actions/answer`);
-  console.log(`[telnyx] Answered call ${callControlId}`);
+/** Answer an incoming call, optionally starting streaming in the same command. */
+export async function answerCall(
+  callControlId: string,
+  streamUrl?: string,
+): Promise<void> {
+  const body: Record<string, unknown> = {};
+  if (streamUrl) {
+    body.stream_url = streamUrl;
+    body.stream_track = 'inbound_track';
+    body.stream_bidirectional_mode = 'rtp';
+    body.stream_bidirectional_codec = 'PCMU';
+  }
+  await telnyxPost(
+    `/calls/${callControlId}/actions/answer`,
+    Object.keys(body).length > 0 ? body : undefined,
+  );
+  console.log(`[telnyx] Answered call ${callControlId}${streamUrl ? ` + streaming → ${streamUrl}` : ''}`);
 }
 
 /** Hang up a call. */
@@ -53,8 +66,8 @@ export async function startStreaming(
   console.log(`[telnyx] Started streaming for ${callControlId} → ${streamUrl}`);
 }
 
-/** Build the WebSocket stream URL for a given call control ID. */
-export function buildStreamUrl(callControlId: string): string {
+/** Build the WebSocket stream URL. */
+export function buildStreamUrl(): string {
   const base = config.apiBaseUrl.replace(/^http/, 'ws');
-  return `${base}/voice/stream/${callControlId}`;
+  return `${base}/voice/stream`;
 }

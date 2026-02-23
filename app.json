@@ -18,7 +18,10 @@
       "bundleIdentifier": "com.aireceptionist.app",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Used for live AI voice calls",
-        "UIBackgroundModes": ["audio", "remote-notification"]
+        "UIBackgroundModes": [
+          "audio",
+          "remote-notification"
+        ]
       }
     },
     "android": {
@@ -28,7 +31,9 @@
       },
       "package": "com.aireceptionist.app",
       "edgeToEdgeEnabled": true,
-      "permissions": ["RECORD_AUDIO"]
+      "permissions": [
+        "RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -46,7 +51,8 @@
         {
           "icon": "./assets/icon.png"
         }
-      ]
+      ],
+      "expo-audio"
     ]
   }
 }

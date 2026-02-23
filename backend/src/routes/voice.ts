@@ -6,30 +6,10 @@ import { requireAuth } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { AppError } from '../lib/errors.js';
 import { config } from '../config.js';
+import { toGrokVoice } from '../lib/grokVoice.js';
 import { eq, and } from 'drizzle-orm';
 
 const router = Router();
-
-// ─── Voice Map (OpenAI-style → Grok) ────────────────────────────────────────
-
-const GROK_VOICE_NAMES = ['Sal', 'Ara', 'Eve', 'Leo', 'Rex'] as const;
-type GrokVoice = (typeof GROK_VOICE_NAMES)[number];
-
-const VOICE_MAP: Record<string, GrokVoice> = {
-  alloy: 'Sal',
-  shimmer: 'Ara',
-  nova: 'Eve',
-  echo: 'Leo',
-  onyx: 'Rex',
-};
-
-function toGrokVoice(voiceId: string): GrokVoice {
-  // If already a valid Grok voice name, pass through
-  if (GROK_VOICE_NAMES.includes(voiceId as GrokVoice)) {
-    return voiceId as GrokVoice;
-  }
-  return VOICE_MAP[voiceId.toLowerCase()] ?? 'Ara';
-}
 
 // ─── Zod Schema ──────────────────────────────────────────────────────────────
 
@@ -92,6 +72,7 @@ router.post(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.xaiApiKey}`,
         },
+        body: JSON.stringify({ expires_after: { seconds: 300 } }),
       });
 
       if (!xaiResponse.ok) {
@@ -101,13 +82,14 @@ router.post(
       }
 
       const xaiData = (await xaiResponse.json()) as {
-        client_secret: { value: string; expires_at: number };
+        value: string;
+        expires_at: number;
       };
 
       // 4. Return token + agent config
       res.json({
-        token: xaiData.client_secret.value,
-        expires_at: xaiData.client_secret.expires_at,
+        token: xaiData.value,
+        expires_at: xaiData.expires_at,
         agent: {
           instructions: agent.systemPrompt,
           voice: toGrokVoice(agent.voiceId),

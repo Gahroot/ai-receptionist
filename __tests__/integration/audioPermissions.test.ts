@@ -6,7 +6,7 @@
  */
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 import { Alert, Linking, Platform } from 'react-native';
-import { ExpoAudioStreamModule } from '@siteed/expo-audio-stream';
+import { ExpoAudioStreamModule } from '@siteed/expo-audio-studio';
 import { useAudioPermissions } from '@/hooks/useAudioPermissions';
 
 describe('useAudioPermissions Integration', () => {

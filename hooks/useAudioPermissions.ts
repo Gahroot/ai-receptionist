@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Linking, Platform } from 'react-native';
-import { ExpoAudioStreamModule } from '@siteed/expo-audio-stream';
+import { ExpoAudioStreamModule } from '@siteed/expo-audio-studio';
 
 export function useAudioPermissions() {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);

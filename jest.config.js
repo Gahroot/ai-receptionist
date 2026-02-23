@@ -4,7 +4,6 @@ module.exports = {
     'node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|@siteed/.*|tamagui|@tamagui/.*|lucide-react-native|zustand|axios)',
   ],
   setupFiles: ['./__tests__/setup.ts'],
-  setupFilesAfterEnv: ['@testing-library/jest-native/extend-expect'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
   },

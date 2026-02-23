@@ -109,7 +109,7 @@ jest.mock('@/services/audioPlaybackService', () => ({
 const mockStartRecording = jest.fn().mockResolvedValue(undefined);
 const mockStopRecording = jest.fn().mockResolvedValue(undefined);
 
-jest.mock('@siteed/expo-audio-stream', () => ({
+jest.mock('@siteed/expo-audio-studio', () => ({
   useAudioRecorder: jest.fn(() => ({
     startRecording: mockStartRecording,
     stopRecording: mockStopRecording,

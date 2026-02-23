@@ -80,7 +80,7 @@ async function seed() {
   // 4b. Create phone number
   await db.insert(schema.phoneNumbers).values({
     workspaceId: workspace.id,
-    phoneNumber: '+12485309314',
+    phoneNumber: '+12489711931',
     label: 'Main Line',
     provider: 'telnyx',
     agentId: agent.id,

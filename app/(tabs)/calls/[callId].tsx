@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ActivityIndicator, Alert } from 'react-native';
 import { YStack, XStack, Text, Button, ScrollView, Separator, Spinner } from 'tamagui';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,7 +20,7 @@ import {
 } from 'lucide-react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { format } from 'date-fns';
-import { Audio } from 'expo-av';
+import { useAudioPlayer } from 'expo-audio';
 import { colors } from '../../../constants/theme';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/authStore';
@@ -130,7 +130,7 @@ export default function CallDetailScreen() {
   const [summaryFetched, setSummaryFetched] = useState(false);
 
   // Audio state
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const player = useAudioPlayer(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioDuration, setAudioDuration] = useState(0);
   const [audioPosition, setAudioPosition] = useState(0);
@@ -200,50 +200,41 @@ export default function CallDetailScreen() {
     fetchSummary();
   }, [workspaceId, callId, call, summaryFetched]);
 
-  // Cleanup audio on unmount
+  // Track playback status
   useEffect(() => {
-    return () => {
-      if (soundRef.current) {
-        soundRef.current.unloadAsync();
+    const subscription = player.addListener('playbackStatusUpdate', () => {
+      setAudioPosition(player.currentTime * 1000);
+      setAudioDuration(player.duration * 1000);
+      if (!player.playing && isPlaying && player.currentTime > 0) {
+        setIsPlaying(false);
+        setAudioPosition(0);
+        player.seekTo(0);
       }
+    });
+    return () => {
+      subscription.remove();
     };
-  }, []);
+  }, [player, isPlaying]);
 
   const handlePlayPause = useCallback(async () => {
     if (!call?.recording_url) return;
 
     try {
-      if (soundRef.current) {
-        if (isPlaying) {
-          await soundRef.current.pauseAsync();
-          setIsPlaying(false);
-        } else {
-          await soundRef.current.playAsync();
-          setIsPlaying(true);
+      if (isPlaying) {
+        player.pause();
+        setIsPlaying(false);
+      } else {
+        // Load new source if needed
+        if (player.duration === 0) {
+          player.replace({ uri: call.recording_url });
         }
-        return;
+        player.play();
+        setIsPlaying(true);
       }
-
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: call.recording_url },
-        { shouldPlay: true },
-        (status) => {
-          if (!status.isLoaded) return;
-          setAudioPosition(status.positionMillis);
-          setAudioDuration(status.durationMillis ?? 0);
-          if (status.didJustFinish) {
-            setIsPlaying(false);
-            setAudioPosition(0);
-            soundRef.current?.setPositionAsync(0);
-          }
-        }
-      );
-      soundRef.current = sound;
-      setIsPlaying(true);
     } catch (err) {
       console.error('Audio playback error:', err);
     }
-  }, [call?.recording_url, isPlaying]);
+  }, [call?.recording_url, isPlaying, player]);
 
   const handleGenerateSummary = useCallback(async () => {
     if (!workspaceId || !callId) return;

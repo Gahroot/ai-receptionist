@@ -10,25 +10,8 @@ import { db } from '../db/index.js';
 import { agents, contacts, knowledgeBase, calls } from '../db/schema.js';
 import { config } from '../config.js';
 import { telnyxToGrok, grokToTelnyx, TELNYX_MIN_CHUNK_BYTES } from '../lib/audio.js';
+import { toGrokVoice } from '../lib/grokVoice.js';
 import { eq, and } from 'drizzle-orm';
-
-// ─── Voice map (OpenAI-style → Grok) ────────────────────────────────────────
-
-const GROK_VOICE_NAMES = ['Sal', 'Ara', 'Eve', 'Leo', 'Rex'] as const;
-type GrokVoice = (typeof GROK_VOICE_NAMES)[number];
-
-const VOICE_MAP: Record<string, GrokVoice> = {
-  alloy: 'Sal',
-  shimmer: 'Ara',
-  nova: 'Eve',
-  echo: 'Leo',
-  onyx: 'Rex',
-};
-
-function toGrokVoice(voiceId: string): GrokVoice {
-  if (GROK_VOICE_NAMES.includes(voiceId as GrokVoice)) return voiceId as GrokVoice;
-  return VOICE_MAP[voiceId.toLowerCase()] ?? 'Ara';
-}
 
 // ─── Active calls registry ──────────────────────────────────────────────────
 
@@ -62,11 +45,30 @@ export class VoiceBridge {
     public readonly callDbId: string,
   ) {}
 
+  private sendToGrok(message: object): void {
+    if (this.grokWs?.readyState === WebSocket.OPEN) {
+      try { this.grokWs.send(JSON.stringify(message)); }
+      catch (err) { console.error(`[bridge:${this.callControlId.slice(0, 8)}] Grok send error:`, err); }
+    }
+  }
+
+  private sendToTelnyx(message: object): void {
+    if (this.telnyxWs?.readyState === WebSocket.OPEN) {
+      try { this.telnyxWs.send(JSON.stringify(message)); }
+      catch (err) { console.error(`[bridge:${this.callControlId.slice(0, 8)}] Telnyx send error:`, err); }
+    }
+  }
+
   /** Start the bridge: connect to Grok, wire up both WebSockets. */
-  async start(telnyxWs: WebSocket): Promise<void> {
+  async start(telnyxWs: WebSocket, streamId?: string): Promise<void> {
     this.telnyxWs = telnyxWs;
+    if (streamId) {
+      this.streamId = streamId;
+      this.streamReady = true;
+    }
     const tag = `[bridge:${this.callControlId.slice(0, 8)}]`;
 
+    try {
     // 1. Fetch agent config
     const [agent] = await db
       .select()
@@ -75,8 +77,7 @@ export class VoiceBridge {
       .limit(1);
 
     if (!agent) {
-      console.error(`${tag} Agent not found: ${this.agentId}`);
-      return;
+      throw new Error(`Agent not found: ${this.agentId}`);
     }
 
     // 2. Fetch knowledge base FAQ entries
@@ -112,8 +113,7 @@ export class VoiceBridge {
 
     // 5. Get Grok ephemeral token
     if (!config.xaiApiKey) {
-      console.error(`${tag} xAI API key not configured`);
-      return;
+      throw new Error('xAI API key not configured');
     }
 
     const tokenRes = await fetch('https://api.x.ai/v1/realtime/client_secrets', {
@@ -122,17 +122,22 @@ export class VoiceBridge {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${config.xaiApiKey}`,
       },
+      body: JSON.stringify({ expires_after: { seconds: 300 } }),
     });
 
     if (!tokenRes.ok) {
-      console.error(`${tag} Failed to get Grok token: ${tokenRes.status}`);
-      return;
+      const errBody = await tokenRes.text().catch(() => '');
+      throw new Error(`Failed to get Grok token: ${tokenRes.status} ${errBody}`);
     }
 
     const tokenData = (await tokenRes.json()) as {
-      client_secret: { value: string };
+      value: string;
+      expires_at: number;
     };
-    const grokToken = tokenData.client_secret.value;
+    if (!tokenData.value) {
+      throw new Error(`Invalid xAI token response: ${JSON.stringify(tokenData)}`);
+    }
+    const grokToken = tokenData.value;
 
     // 6. Connect to Grok Realtime API
     console.log(`${tag} Connecting to Grok Realtime API...`);
@@ -142,27 +147,25 @@ export class VoiceBridge {
 
     this.grokWs.on('open', () => {
       console.log(`${tag} Grok WebSocket connected, sending session.update`);
-      this.grokWs!.send(
-        JSON.stringify({
-          type: 'session.update',
-          session: {
-            modalities: ['text', 'audio'],
-            instructions,
-            voice: toGrokVoice(agent.voiceId),
-            input_audio_format: 'pcm16',
-            output_audio_format: 'pcm16',
-            input_audio_transcription: { model: 'whisper-1' },
-            turn_detection: {
-              type: 'server_vad',
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 500,
-            },
-            temperature: agent.temperature,
-            max_response_output_tokens: agent.maxTokens,
+      this.sendToGrok({
+        type: 'session.update',
+        session: {
+          modalities: ['text', 'audio'],
+          instructions,
+          voice: toGrokVoice(agent.voiceId),
+          input_audio_format: 'pcm16',
+          output_audio_format: 'pcm16',
+          input_audio_transcription: { model: 'whisper-1' },
+          turn_detection: {
+            type: 'server_vad',
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 500,
           },
-        }),
-      );
+          temperature: agent.temperature,
+          max_response_output_tokens: agent.maxTokens,
+        },
+      });
     });
 
     this.grokWs.on('message', (raw) => {
@@ -175,6 +178,7 @@ export class VoiceBridge {
 
     this.grokWs.on('error', (err) => {
       console.error(`${tag} Grok WebSocket error:`, err);
+      this.stop();
     });
 
     // 7. Wire up Telnyx WebSocket events
@@ -189,7 +193,19 @@ export class VoiceBridge {
 
     telnyxWs.on('error', (err) => {
       console.error(`${tag} Telnyx WebSocket error:`, err);
+      this.stop();
     });
+    } catch (err) {
+      console.error(`${tag} start() failed:`, err);
+      try { this.grokWs?.close(); } catch {}
+      try { telnyxWs.close(); } catch {}
+      try {
+        await db.update(calls).set({ status: 'failed' }).where(eq(calls.id, this.callDbId));
+      } catch (dbErr) {
+        console.error(`${tag} Failed to update call record:`, dbErr);
+      }
+      activeCalls.delete(this.callControlId);
+    }
   }
 
   /** Handle messages from Grok. */
@@ -222,13 +238,11 @@ export class VoiceBridge {
           while (this.telnyxBuffer.length >= TELNYX_MIN_CHUNK_BYTES) {
             const chunk = this.telnyxBuffer.subarray(0, TELNYX_MIN_CHUNK_BYTES);
             this.telnyxBuffer = this.telnyxBuffer.subarray(TELNYX_MIN_CHUNK_BYTES);
-            this.telnyxWs.send(
-              JSON.stringify({
-                event: 'media',
-                stream_id: this.streamId,
-                media: { payload: chunk.toString('base64') },
-              }),
-            );
+            this.sendToTelnyx({
+              event: 'media',
+              stream_id: this.streamId,
+              media: { payload: chunk.toString('base64') },
+            });
           }
         }
         break;
@@ -261,23 +275,14 @@ export class VoiceBridge {
     }
 
     switch (msg.event) {
-      case 'start':
-        console.log(`${tag} Telnyx stream started`);
-        this.streamId = msg.stream_id ?? '';
-        this.streamReady = true;
-        this.maybeTriggerGreeting(null, tag);
-        break;
-
       case 'media':
         if (msg.media?.payload && this.grokWs?.readyState === WebSocket.OPEN) {
           const mulaw = Buffer.from(msg.media.payload, 'base64');
           const pcm24k = telnyxToGrok(mulaw);
-          this.grokWs.send(
-            JSON.stringify({
-              type: 'input_audio_buffer.append',
-              audio: pcm24k.toString('base64'),
-            }),
-          );
+          this.sendToGrok({
+            type: 'input_audio_buffer.append',
+            audio: pcm24k.toString('base64'),
+          });
         }
         break;
 
@@ -296,8 +301,7 @@ export class VoiceBridge {
     if (!this.streamReady || !this.grokReady) return;
     if (!this.grokWs || this.grokWs.readyState !== WebSocket.OPEN) return;
 
-    // Store greeting for later use (only set once from Grok handler)
-    const greeting = initialGreeting ?? this._storedGreeting;
+    const greeting = initialGreeting;
     if (!greeting) return;
 
     // Prevent duplicate greeting
@@ -309,48 +313,41 @@ export class VoiceBridge {
     setTimeout(() => {
       if (this.grokWs?.readyState !== WebSocket.OPEN) return;
 
-      this.grokWs.send(
-        JSON.stringify({
-          type: 'conversation.item.create',
-          item: {
-            type: 'message',
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: `[SYSTEM] The call just connected. Greet the caller with: "${greeting}"`,
-              },
-            ],
-          },
-        }),
-      );
-      this.grokWs!.send(JSON.stringify({ type: 'response.create' }));
+      this.sendToGrok({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: `[SYSTEM] The call just connected. Greet the caller with: "${greeting}"`,
+            },
+          ],
+        },
+      });
+      this.sendToGrok({ type: 'response.create' });
       console.log(`${tag} Greeting triggered`);
     }, 300);
   }
 
-  // Store greeting across calls to maybeTriggerGreeting
-  private _storedGreeting: string | null = null;
   private _greetingSent = false;
+  private stopped = false;
 
   /** Stop the bridge, save call record, clean up. */
   async stop(): Promise<void> {
-    if (activeCalls.has(this.callControlId)) {
-      activeCalls.delete(this.callControlId);
-    }
+    if (this.stopped) return;
+    this.stopped = true;
+
+    activeCalls.delete(this.callControlId);
 
     // Flush remaining buffer to Telnyx
-    if (
-      this.telnyxBuffer.length > 0 &&
-      this.telnyxWs?.readyState === WebSocket.OPEN
-    ) {
-      this.telnyxWs.send(
-        JSON.stringify({
-          event: 'media',
-          stream_id: this.streamId,
-          media: { payload: this.telnyxBuffer.toString('base64') },
-        }),
-      );
+    if (this.telnyxBuffer.length > 0) {
+      this.sendToTelnyx({
+        event: 'media',
+        stream_id: this.streamId,
+        media: { payload: this.telnyxBuffer.toString('base64') },
+      });
       this.telnyxBuffer = Buffer.alloc(0);
     }
 

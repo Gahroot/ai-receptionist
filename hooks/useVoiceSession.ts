@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { useAudioRecorder } from '@siteed/expo-audio-stream';
+import { useAudioRecorder } from '@siteed/expo-audio-studio';
 import { GROK_REALTIME_URL } from '../constants/api';
 import { useAuthStore } from '../stores/authStore';
 import { useCallStore } from '../stores/callStore';
