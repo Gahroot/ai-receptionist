@@ -77,7 +77,7 @@ function toCallResponse(row: {
     channel: c.channel,
     status: c.status,
     duration_seconds: c.durationSeconds,
-    recording_url: c.recordingUrl,
+    recording_url: c.recordingUrl ? `/api/v1/recordings/${c.recordingUrl}` : null,
     transcript: c.transcript,
     created_at: c.createdAt.toISOString(),
     from_number: c.fromNumber,

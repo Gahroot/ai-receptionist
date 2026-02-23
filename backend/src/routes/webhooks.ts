@@ -7,14 +7,28 @@
 
 import express, { Router } from 'express';
 import { db } from '../db/index.js';
-import { phoneNumbers, agents, contacts, calls } from '../db/schema.js';
+import { phoneNumbers, agents, contacts, calls, callForwarding, callScope } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { telnyxWebhookMiddleware } from '../lib/telnyxWebhook.js';
-import { answerCall, buildStreamUrl } from '../services/telnyxApi.js';
+import { answerCall, buildStreamUrl, recordStart, transferCall } from '../services/telnyxApi.js';
 import { sendPushToWorkspace } from '../services/pushNotifications.js';
 import { activeCalls } from '../services/voiceBridge.js';
+import { uploadRecordingFromUrl } from '../services/recordingStorage.js';
+import { isWithinBusinessHours } from '../lib/businessHoursUtil.js';
 
 const router = Router();
+
+// ─── Call context — shared with voiceStream.ts for bridge options ────────────
+
+export interface CallContext {
+  afterHours: boolean;
+  screened: boolean;
+  endingMessage?: string;
+  forwardToNumber?: string;
+}
+
+/** Exported so voiceStream.ts can pass context to VoiceBridge. */
+export const callContextMap = new Map<string, CallContext>();
 
 // Raw body parsing + signature verification
 router.use(express.raw({ type: 'application/json' }));
@@ -76,6 +90,10 @@ router.post('/', async (req, res) => {
         console.log(`[webhook] Streaming stopped for ${callControlId}`);
         break;
 
+      case 'call.recording.saved':
+        await handleRecordingSaved(payload);
+        break;
+
       default:
         console.log(`[webhook] Unhandled event: ${eventType}`);
     }
@@ -93,6 +111,12 @@ async function handleCallInitiated(payload: Record<string, unknown> & {
   to?: string;
 }): Promise<void> {
   const { call_control_id: callControlId, direction, from: fromNumber, to: toNumber } = payload;
+
+  // Handle outbound calls (already have a call record)
+  if (direction === 'outgoing') {
+    console.log(`[webhook] Outbound call initiated: ${callControlId}`);
+    return;
+  }
 
   // Only handle inbound calls
   if (direction !== 'incoming') {
@@ -194,10 +218,83 @@ async function handleCallInitiated(payload: Record<string, unknown> & {
     },
   ).catch((err) => console.error('[webhook] Push notification failed:', err));
 
-  // 6. Answer call + start streaming in a single command
+  // 6. Check call scope (screening)
+  const [scopeRow] = await db
+    .select()
+    .from(callScope)
+    .where(eq(callScope.workspaceId, phoneRecord.workspaceId))
+    .limit(1);
+
+  const scope = scopeRow?.scope ?? 'everyone';
+  const endingMessage = scopeRow?.endingMessage ?? 'Thank you for calling. Goodbye!';
+
+  let screened = false;
+  if (scope === 'disabled') {
+    screened = true;
+  } else if (scope === 'contacts_only' && !contact) {
+    screened = true;
+  } else if (scope === 'unknown_only' && contact) {
+    screened = true;
+  }
+
+  if (screened) {
+    console.log(`[webhook] Call screened (scope=${scope}) for ${callControlId}`);
+    // Answer, start AI bridge with ending message, then it will hang up
+    callContextMap.set(callControlId, { afterHours: false, screened: true, endingMessage });
+    const streamUrl = buildStreamUrl();
+    await answerCall(callControlId, streamUrl);
+    await db.update(calls).set({ status: 'screened' }).where(eq(calls.id, callRecord.id));
+    return;
+  }
+
+  // 7. Check business hours
+  const afterHours = !(await isWithinBusinessHours(phoneRecord.workspaceId));
+
+  // 8. Check call forwarding
+  const [fwdRow] = await db
+    .select()
+    .from(callForwarding)
+    .where(eq(callForwarding.workspaceId, phoneRecord.workspaceId))
+    .limit(1);
+
+  if (fwdRow?.enabled && fwdRow.forwardToNumber) {
+    const mode = fwdRow.forwardMode;
+    let shouldForward = false;
+
+    if (mode === 'always') {
+      shouldForward = true;
+    } else if (mode === 'busy' && activeCalls.size > 0) {
+      shouldForward = true;
+    } else if (mode === 'after_hours' && afterHours) {
+      shouldForward = true;
+    }
+    // 'no_answer' mode: not applicable for AI (AI always answers) — skip
+
+    if (shouldForward) {
+      console.log(`[webhook] Forwarding call ${callControlId} to ${fwdRow.forwardToNumber} (mode=${mode})`);
+      await answerCall(callControlId);
+      await transferCall(callControlId, fwdRow.forwardToNumber, toNumber);
+      await db.update(calls).set({ status: 'forwarded' }).where(eq(calls.id, callRecord.id));
+      return;
+    }
+  }
+
+  // 9. Store call context for voiceBridge
+  callContextMap.set(callControlId, {
+    afterHours,
+    screened: false,
+    forwardToNumber: fwdRow?.forwardToNumber ?? undefined,
+  });
+
+  // 10. Answer call + start streaming
   const streamUrl = buildStreamUrl();
   console.log(`[webhook] Answering call ${callControlId} with streaming → ${streamUrl}`);
   await answerCall(callControlId, streamUrl);
+
+  // 11. Start recording
+  recordStart(callControlId).catch((err) =>
+    console.error(`[webhook] Failed to start recording for ${callControlId}:`, err),
+  );
 }
 
 async function handleCallHangup(payload: Record<string, unknown> & {
@@ -207,6 +304,9 @@ async function handleCallHangup(payload: Record<string, unknown> & {
   const { call_control_id: callControlId, hangup_cause: hangupCause } = payload;
 
   console.log(`[webhook] Call hangup: ${callControlId}, cause=${hangupCause}`);
+
+  // Clean up context
+  callContextMap.delete(callControlId);
 
   // Stop voice bridge if active
   const bridge = activeCalls.get(callControlId);
@@ -230,7 +330,43 @@ async function handleCallHangup(payload: Record<string, unknown> & {
   }
 }
 
+async function handleRecordingSaved(payload: Record<string, unknown>): Promise<void> {
+  const callControlId = payload.call_control_id as string;
+  const recordingUrls = payload.recording_urls as { wav?: string } | undefined;
+  const wavUrl = recordingUrls?.wav;
+
+  if (!wavUrl) {
+    console.warn(`[webhook] recording.saved but no WAV URL for ${callControlId}`);
+    return;
+  }
+
+  // Look up call by ccid
+  const [callRecord] = await db
+    .select({ id: calls.id })
+    .from(calls)
+    .where(eq(calls.telnyxCallControlId, callControlId))
+    .limit(1);
+
+  if (!callRecord) {
+    console.warn(`[webhook] recording.saved: no call record for ccid=${callControlId}`);
+    return;
+  }
+
+  try {
+    const filename = await uploadRecordingFromUrl(wavUrl, callRecord.id, 'wav');
+    await db
+      .update(calls)
+      .set({ recordingUrl: filename })
+      .where(eq(calls.id, callRecord.id));
+    console.log(`[webhook] Recording saved for call ${callRecord.id}: ${filename}`);
+  } catch (err) {
+    console.error(`[webhook] Failed to save recording for ${callRecord.id}:`, err);
+  }
+}
+
 async function handleStreamingFailed(callControlId: string): Promise<void> {
+  callContextMap.delete(callControlId);
+
   const bridge = activeCalls.get(callControlId);
   if (bridge) {
     await bridge.stop();

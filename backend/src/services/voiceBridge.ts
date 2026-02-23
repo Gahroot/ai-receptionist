@@ -12,18 +12,49 @@ import { config } from '../config.js';
 import { telnyxToGrok, grokToTelnyx, createDownsampleFilter, TELNYX_MIN_CHUNK_BYTES } from '../lib/audio.js';
 import type { DownsampleFilter } from '../lib/audio.js';
 import { toGrokVoice } from '../lib/grokVoice.js';
+import { transferCall, hangupCall } from './telnyxApi.js';
 import { eq, and } from 'drizzle-orm';
 
 // ─── Active calls registry ──────────────────────────────────────────────────
 
 export const activeCalls = new Map<string, VoiceBridge>();
 
-// ─── Transcript entry ───────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 interface TranscriptEntry {
   role: 'assistant' | 'user';
   text: string;
 }
+
+export interface BridgeOptions {
+  afterHours: boolean;
+  screened: boolean;
+  endingMessage?: string;
+  forwardToNumber?: string;
+}
+
+// ─── Grok function tool definitions ──────────────────────────────────────────
+
+const GROK_TOOLS = [
+  {
+    type: 'function',
+    name: 'take_voicemail',
+    description: 'Switch to voicemail mode. Use this when the caller wants to leave a message, or when the AI cannot help further and should offer voicemail.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    type: 'function',
+    name: 'transfer_call',
+    description: 'Transfer the call to a human operator. Use this when the caller specifically requests to speak with a person.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    type: 'function',
+    name: 'end_call',
+    description: 'End the call politely. Use this when the conversation is complete and the caller has said goodbye.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+];
 
 // ─── VoiceBridge class ──────────────────────────────────────────────────────
 
@@ -37,6 +68,9 @@ export class VoiceBridge {
   private startTime = Date.now();
   private streamId = '';
   private downsampleFilter: DownsampleFilter = createDownsampleFilter();
+  private isVoicemail = false;
+  private _greetingSent = false;
+  private stopped = false;
 
   constructor(
     public readonly callControlId: string,
@@ -45,6 +79,7 @@ export class VoiceBridge {
     public readonly fromNumber: string,
     public readonly toNumber: string,
     public readonly callDbId: string,
+    public readonly options: BridgeOptions = { afterHours: false, screened: false },
   ) {}
 
   private sendToGrok(message: object): void {
@@ -113,6 +148,19 @@ export class VoiceBridge {
       }
     }
 
+    // Add after-hours context
+    if (this.options.afterHours) {
+      instructions += '\n\n[AFTER HOURS] The business is currently closed. Let the caller know they are reaching the after-hours service. Offer to take a voicemail message by calling the take_voicemail function, or provide basic information from the FAQ if possible.';
+    }
+
+    // Add screened call context
+    if (this.options.screened && this.options.endingMessage) {
+      instructions += `\n\n[SCREENED CALL] This call has been screened. Say the following message to the caller and then call the end_call function: "${this.options.endingMessage}"`;
+    }
+
+    // Add tool usage instructions
+    instructions += '\n\nYou have the following abilities:\n- Call take_voicemail when the caller wants to leave a message\n- Call transfer_call when the caller wants to speak with a human\n- Call end_call when the conversation is complete';
+
     // 5. Connect to Grok Realtime API (server-side: use API key directly)
     if (!config.xaiApiKey) {
       throw new Error('xAI API key not configured');
@@ -142,6 +190,7 @@ export class VoiceBridge {
           },
           temperature: agent.temperature,
           max_response_output_tokens: agent.maxTokens,
+          tools: GROK_TOOLS,
         },
       });
     });
@@ -175,8 +224,8 @@ export class VoiceBridge {
     });
     } catch (err) {
       console.error(`${tag} start() failed:`, err);
-      try { this.grokWs?.close(); } catch {}
-      try { telnyxWs.close(); } catch {}
+      try { this.grokWs?.close(); } catch { /* ignore */ }
+      try { telnyxWs.close(); } catch { /* ignore */ }
       try {
         await db.update(calls).set({ status: 'failed' }).where(eq(calls.id, this.callDbId));
       } catch (dbErr) {
@@ -192,24 +241,26 @@ export class VoiceBridge {
     initialGreeting: string | null,
     tag: string,
   ): void {
-    let msg: { type: string; delta?: string; transcript?: string };
+    let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(raw.toString());
     } catch {
       return;
     }
 
-    switch (msg.type) {
+    const type = msg.type as string;
+
+    switch (type) {
       case 'session.created':
       case 'session.updated':
-        console.log(`${tag} Grok ${msg.type}`);
+        console.log(`${tag} Grok ${type}`);
         this.grokReady = true;
         this.maybeTriggerGreeting(initialGreeting, tag);
         break;
 
       case 'response.output_audio.delta':
         if (msg.delta && this.telnyxWs?.readyState === WebSocket.OPEN) {
-          const pcm24k = Buffer.from(msg.delta, 'base64');
+          const pcm24k = Buffer.from(msg.delta as string, 'base64');
           const mulaw = grokToTelnyx(pcm24k, this.downsampleFilter);
 
           // Buffer until we have at least TELNYX_MIN_CHUNK_BYTES
@@ -228,23 +279,113 @@ export class VoiceBridge {
 
       case 'response.output_audio_transcript.done':
         if (msg.transcript) {
-          this.transcript.push({ role: 'assistant', text: msg.transcript });
+          this.transcript.push({ role: 'assistant', text: msg.transcript as string });
         }
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
-          this.transcript.push({ role: 'user', text: msg.transcript });
+          this.transcript.push({ role: 'user', text: msg.transcript as string });
         }
         break;
 
+      case 'response.function_call_arguments.done':
+        this.handleFunctionCall(
+          msg.name as string,
+          msg.call_id as string,
+          tag,
+        );
+        break;
+
       default:
-        if (msg.type === 'error') {
+        if (type === 'error') {
           console.error(`${tag} Grok error:`, raw.toString());
-        } else if (!msg.type.startsWith('response.output_audio')) {
-          console.log(`${tag} Grok event: ${msg.type}`);
+        } else if (!type.startsWith('response.output_audio')) {
+          console.log(`${tag} Grok event: ${type}`);
         }
         break;
+    }
+  }
+
+  /** Handle Grok function calls. */
+  private handleFunctionCall(
+    name: string,
+    callId: string,
+    tag: string,
+  ): void {
+    console.log(`${tag} Function call: ${name}`);
+
+    switch (name) {
+      case 'take_voicemail':
+        this.isVoicemail = true;
+        // Update DB
+        db.update(calls)
+          .set({ isVoicemail: true })
+          .where(eq(calls.id, this.callDbId))
+          .catch((err) => console.error(`${tag} Failed to set voicemail flag:`, err));
+
+        // Respond to Grok so it continues
+        this.sendToGrok({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: JSON.stringify({ status: 'voicemail_mode_activated' }),
+          },
+        });
+        this.sendToGrok({ type: 'response.create' });
+        break;
+
+      case 'transfer_call':
+        if (this.options.forwardToNumber) {
+          transferCall(this.callControlId, this.options.forwardToNumber, this.toNumber).catch(
+            (err) => console.error(`${tag} Transfer failed:`, err),
+          );
+          this.sendToGrok({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: callId,
+              output: JSON.stringify({ status: 'transferring', to: this.options.forwardToNumber }),
+            },
+          });
+          this.sendToGrok({ type: 'response.create' });
+          db.update(calls)
+            .set({ status: 'forwarded' })
+            .where(eq(calls.id, this.callDbId))
+            .catch((err) => console.error(`${tag} Failed to update call status:`, err));
+        } else {
+          this.sendToGrok({
+            type: 'conversation.item.create',
+            item: {
+              type: 'function_call_output',
+              call_id: callId,
+              output: JSON.stringify({ status: 'no_transfer_number_configured', message: 'No forwarding number is configured. Offer to take a voicemail instead.' }),
+            },
+          });
+          this.sendToGrok({ type: 'response.create' });
+        }
+        break;
+
+      case 'end_call':
+        this.sendToGrok({
+          type: 'conversation.item.create',
+          item: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: JSON.stringify({ status: 'ending_call' }),
+          },
+        });
+        // Give 3 seconds for Grok to finish speaking, then hang up
+        setTimeout(() => {
+          hangupCall(this.callControlId).catch((err) =>
+            console.error(`${tag} Hangup failed:`, err),
+          );
+        }, 3000);
+        break;
+
+      default:
+        console.warn(`${tag} Unknown function call: ${name}`);
     }
   }
 
@@ -318,9 +459,6 @@ export class VoiceBridge {
     }, 300);
   }
 
-  private _greetingSent = false;
-  private stopped = false;
-
   /** Stop the bridge, save call record, clean up. */
   async stop(): Promise<void> {
     if (this.stopped) return;
@@ -347,18 +485,31 @@ export class VoiceBridge {
     // Calculate duration
     const durationSeconds = Math.round((Date.now() - this.startTime) / 1000);
 
+    // Build update payload
+    const updateData: Record<string, unknown> = {
+      status: 'completed',
+      durationSeconds,
+      transcript: JSON.stringify(this.transcript),
+    };
+
+    // If voicemail, extract user transcript entries as voicemail transcription
+    if (this.isVoicemail) {
+      const userEntries = this.transcript
+        .filter((e) => e.role === 'user')
+        .map((e) => e.text);
+      if (userEntries.length > 0) {
+        updateData.voicemailTranscription = userEntries.join(' ');
+      }
+    }
+
     // Update call record with transcript + duration
     try {
       await db
         .update(calls)
-        .set({
-          status: 'completed',
-          durationSeconds,
-          transcript: JSON.stringify(this.transcript),
-        })
+        .set(updateData)
         .where(eq(calls.id, this.callDbId));
       console.log(
-        `[bridge] Call ${this.callDbId} completed: ${durationSeconds}s, ${this.transcript.length} transcript entries`,
+        `[bridge] Call ${this.callDbId} completed: ${durationSeconds}s, ${this.transcript.length} transcript entries${this.isVoicemail ? ' (voicemail)' : ''}`,
       );
     } catch (err) {
       console.error(`[bridge] Failed to update call record:`, err);

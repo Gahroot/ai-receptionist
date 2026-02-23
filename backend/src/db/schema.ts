@@ -240,6 +240,7 @@ export const callForwarding = pgTable('call_forwarding', {
     .references(() => workspaces.id, { onDelete: 'cascade' }),
   enabled: boolean('enabled').notNull().default(false),
   forwardToNumber: varchar('forward_to_number', { length: 50 }),
+  forwardMode: varchar('forward_mode', { length: 50 }).notNull().default('no_answer'),
   ringCount: integer('ring_count').notNull().default(4),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

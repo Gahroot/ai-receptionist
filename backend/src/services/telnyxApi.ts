@@ -23,6 +23,25 @@ async function telnyxPost(path: string, body?: Record<string, unknown>): Promise
   }
 }
 
+async function telnyxPostJson<T>(path: string, body?: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.telnyxApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error(`Telnyx API error ${res.status} on ${path}:`, text);
+    throw new Error(`Telnyx API ${res.status}: ${text}`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
 /** Answer an incoming call, optionally starting streaming in the same command. */
 export async function answerCall(
   callControlId: string,
@@ -148,4 +167,75 @@ export async function releasePhoneNumber(resourceId: string): Promise<void> {
     console.error(`[telnyx] Release number error ${res.status}:`, text);
     throw new Error(`Telnyx API ${res.status}: ${text}`);
   }
+}
+
+/** Start recording a call. */
+export async function recordStart(
+  callControlId: string,
+  format: 'wav' | 'mp3' = 'wav',
+  channels: 'single' | 'dual' = 'single',
+): Promise<void> {
+  await telnyxPost(`/calls/${callControlId}/actions/record_start`, {
+    format,
+    channels,
+  });
+  console.log(`[telnyx] Recording started for ${callControlId}`);
+}
+
+/** Transfer a call to another number. */
+export async function transferCall(
+  callControlId: string,
+  toNumber: string,
+  fromNumber?: string,
+  timeoutSecs = 30,
+): Promise<void> {
+  const body: Record<string, unknown> = {
+    to: toNumber,
+    timeout_secs: timeoutSecs,
+  };
+  if (fromNumber) body.from = fromNumber;
+
+  await telnyxPost(`/calls/${callControlId}/actions/transfer`, body);
+  console.log(`[telnyx] Transferring ${callControlId} to ${toNumber}`);
+}
+
+/** Dial an outbound call. Returns the call_control_id. */
+export async function dialOutbound(
+  to: string,
+  from: string,
+  webhookUrl: string,
+  streamUrl?: string,
+): Promise<{ call_control_id: string; call_leg_id: string }> {
+  const body: Record<string, unknown> = {
+    to,
+    from,
+    connection_id: config.telnyxConnectionId,
+    webhook_url: webhookUrl,
+    record: 'record-from-answer',
+    record_format: 'wav',
+    record_channels: 'single',
+  };
+  if (streamUrl) {
+    body.stream_url = streamUrl;
+    body.stream_track = 'inbound_track';
+    body.stream_bidirectional_mode = 'rtp';
+    body.stream_bidirectional_codec = 'PCMU';
+  }
+
+  const result = await telnyxPostJson<{
+    data: { call_control_id: string; call_leg_id: string };
+  }>('/calls', body);
+
+  console.log(`[telnyx] Outbound call dialed to ${to}, ccid=${result.data.call_control_id}`);
+  return result.data;
+}
+
+/** Send an SMS message via Telnyx. */
+export async function sendSms(
+  from: string,
+  to: string,
+  text: string,
+): Promise<void> {
+  await telnyxPostJson('/messages', { from, to, text });
+  console.log(`[telnyx] SMS sent from ${from} to ${to}`);
 }

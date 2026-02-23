@@ -1,0 +1,1 @@
+ALTER TABLE "call_forwarding" ADD COLUMN "forward_mode" varchar(50) DEFAULT 'no_answer' NOT NULL;

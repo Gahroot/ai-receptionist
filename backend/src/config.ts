@@ -25,6 +25,9 @@ export const config = {
   apiBaseUrl: process.env.API_BASE_URL || '',
   skipWebhookVerification: process.env.SKIP_WEBHOOK_VERIFICATION === 'true',
 
+  // Recordings
+  recordingsDir: process.env.RECORDINGS_DIR || './uploads/recordings',
+
   // CORS
   corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:8081,http://localhost:19006')
     .split(',').map((s: string) => s.trim()),

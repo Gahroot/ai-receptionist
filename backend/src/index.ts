@@ -4,8 +4,10 @@ import cors from 'cors';
 import helmet from 'helmet';
 // eslint-disable-next-line import/no-named-as-default
 import rateLimit from 'express-rate-limit';
+import path from 'path';
 import { config } from './config.js';
 import { notFound, errorHandler } from './lib/errors.js';
+import { requireAuth } from './middleware/auth.js';
 import { setupWebSocketServer } from './routes/voiceStream.js';
 
 // Route imports
@@ -19,6 +21,7 @@ import settingsRoutes from './routes/settings.js';
 import voiceRoutes from './routes/voice.js';
 import knowledgeBaseRoutes from './routes/knowledgeBase.js';
 import webhookRoutes from './routes/webhooks.js';
+import messagingWebhookRoutes from './routes/messagingWebhooks.js';
 import phoneNumberRoutes from './routes/phoneNumbers.js';
 import dailyRecapRoutes from './routes/dailyRecap.js';
 import aiSearchRoutes from './routes/aiSearch.js';
@@ -45,9 +48,18 @@ app.use('/api/v1/auth', authLimiter);
 
 // Mount Telnyx webhooks BEFORE express.json() — they need raw body for signature verification
 app.use('/api/v1/webhooks/telnyx/voice', webhookRoutes);
+app.use('/api/v1/webhooks/telnyx/messaging', messagingWebhookRoutes);
 
 // JSON parsing for all other routes
 app.use(express.json());
+
+// ─── Serve call recordings (JWT-protected) ──────────────────────────────────
+
+app.use(
+  '/api/v1/recordings',
+  requireAuth,
+  express.static(path.resolve(config.recordingsDir)),
+);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 

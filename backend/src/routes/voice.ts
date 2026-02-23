@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db/index.js';
-import { agents, workspaceMemberships } from '../db/schema.js';
+import { agents, workspaceMemberships, phoneNumbers, contacts, calls } from '../db/schema.js';
 import { requireAuth } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { AppError } from '../lib/errors.js';
 import { config } from '../config.js';
 import { toGrokVoice } from '../lib/grokVoice.js';
+import { dialOutbound, buildStreamUrl } from '../services/telnyxApi.js';
 import { eq, and } from 'drizzle-orm';
 
 const router = Router();
@@ -101,6 +102,129 @@ router.post(
       next(err);
     }
   }
+);
+
+// ─── Zod Schema for outbound calls ──────────────────────────────────────────
+
+const outboundBodySchema = z.object({
+  workspace_id: z.string().uuid(),
+  agent_id: z.string().uuid(),
+  to_number: z.string().min(1),
+  from_phone_number: z.string().optional(),
+});
+
+// ─── POST /voice/outbound ───────────────────────────────────────────────────
+
+router.post(
+  '/voice/outbound',
+  requireAuth,
+  validateBody(outboundBodySchema),
+  async (req, res, next) => {
+    try {
+      const userId = req.user!.sub;
+      const { workspace_id, agent_id, to_number, from_phone_number } =
+        req.body as z.infer<typeof outboundBodySchema>;
+
+      // 1. Verify workspace membership
+      const [membership] = await db
+        .select()
+        .from(workspaceMemberships)
+        .where(
+          and(
+            eq(workspaceMemberships.userId, userId),
+            eq(workspaceMemberships.workspaceId, workspace_id),
+          ),
+        )
+        .limit(1);
+
+      if (!membership) {
+        throw new AppError(403, 'Not a member of this workspace');
+      }
+
+      // 2. Fetch agent
+      const [agent] = await db
+        .select()
+        .from(agents)
+        .where(
+          and(
+            eq(agents.id, agent_id),
+            eq(agents.workspaceId, workspace_id),
+          ),
+        )
+        .limit(1);
+
+      if (!agent) {
+        throw new AppError(404, 'Agent not found');
+      }
+
+      // 3. Determine FROM number
+      let fromNumber = from_phone_number;
+      if (!fromNumber) {
+        const [phone] = await db
+          .select()
+          .from(phoneNumbers)
+          .where(
+            and(
+              eq(phoneNumbers.workspaceId, workspace_id),
+              eq(phoneNumbers.isActive, true),
+            ),
+          )
+          .limit(1);
+
+        if (!phone) {
+          throw new AppError(422, 'No phone number configured for this workspace');
+        }
+        fromNumber = phone.phoneNumber;
+      }
+
+      // 4. Match contact
+      const [contact] = await db
+        .select()
+        .from(contacts)
+        .where(
+          and(
+            eq(contacts.workspaceId, workspace_id),
+            eq(contacts.phone, to_number),
+          ),
+        )
+        .limit(1);
+
+      // 5. Insert call record
+      const [callRecord] = await db
+        .insert(calls)
+        .values({
+          workspaceId: workspace_id,
+          direction: 'outbound',
+          channel: 'voice',
+          status: 'ringing',
+          fromNumber,
+          toNumber: to_number,
+          contactId: contact?.id ?? null,
+          agentId: agent.id,
+        })
+        .returning();
+
+      // 6. Dial outbound via Telnyx
+      const webhookUrl = `${config.apiBaseUrl}/api/v1/webhooks/telnyx/voice`;
+      const streamUrl = buildStreamUrl();
+
+      const result = await dialOutbound(to_number, fromNumber, webhookUrl, streamUrl);
+
+      // 7. Update call with Telnyx call control ID
+      await db
+        .update(calls)
+        .set({ telnyxCallControlId: result.call_control_id })
+        .where(eq(calls.id, callRecord.id));
+
+      res.json({
+        id: callRecord.id,
+        call_control_id: result.call_control_id,
+        status: 'ringing',
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
 );
 
 export default router;

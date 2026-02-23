@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ActivityIndicator, Alert } from 'react-native';
+import { ActivityIndicator, Alert, Platform } from 'react-native';
 import { YStack, XStack, Text, Button, ScrollView, Separator, Spinner } from 'tamagui';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeIn } from 'react-native-reanimated';
@@ -22,7 +22,9 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { format } from 'date-fns';
 import { useAudioPlayer } from 'expo-audio';
+import * as SecureStore from 'expo-secure-store';
 import { colors } from '../../../constants/theme';
+import { API_BASE_URL } from '../../../constants/api';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/authStore';
 import { useVoicemailStore } from '../../../stores/voicemailStore';
@@ -153,8 +155,12 @@ export default function CallDetailScreen() {
     };
   }, [player, isPlaying]);
 
+  const recordingUri = call?.recording_url
+    ? `${API_BASE_URL}${call.recording_url}`
+    : null;
+
   const handlePlayPause = useCallback(async () => {
-    if (!call?.recording_url) return;
+    if (!recordingUri) return;
 
     try {
       if (isPlaying) {
@@ -163,7 +169,13 @@ export default function CallDetailScreen() {
       } else {
         // Load new source if needed
         if (player.duration === 0) {
-          player.replace({ uri: call.recording_url });
+          const token = Platform.OS === 'web'
+            ? localStorage.getItem('access_token')
+            : await SecureStore.getItemAsync('access_token');
+          player.replace({
+            uri: recordingUri,
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          });
         }
         player.play();
         setIsPlaying(true);
@@ -171,7 +183,7 @@ export default function CallDetailScreen() {
     } catch (err) {
       console.error('Audio playback error:', err);
     }
-  }, [call?.recording_url, isPlaying, player]);
+  }, [recordingUri, isPlaying, player]);
 
   const handleGenerateSummary = useCallback(async () => {
     if (!workspaceId || !callId) return;
@@ -198,10 +210,11 @@ export default function CallDetailScreen() {
           const customerNumber = call.direction === 'inbound' ? call.from_number : call.to_number;
           const workspaceNumber = call.direction === 'inbound' ? call.to_number : call.from_number;
           api
-            .post(`/workspaces/${workspaceId}/calls`, {
+            .post('/voice/outbound', {
+              workspace_id: workspaceId,
+              agent_id: call.agent_id,
               to_number: customerNumber,
               from_phone_number: workspaceNumber,
-              agent_id: call.agent_id,
             })
             .then((res) => router.push(`/call/${res.data.id}`))
             .catch(() => Alert.alert('Error', 'Failed to initiate call back'));
@@ -624,10 +637,11 @@ export default function CallDetailScreen() {
                   try {
                     const customerNumber = call.direction === 'inbound' ? call.from_number : call.to_number;
                     const workspaceNumber = call.direction === 'inbound' ? call.to_number : call.from_number;
-                    const res = await api.post(`/workspaces/${workspaceId}/calls`, {
+                    const res = await api.post('/voice/outbound', {
+                      workspace_id: workspaceId,
+                      agent_id: call.agent_id,
                       to_number: customerNumber,
                       from_phone_number: workspaceNumber,
-                      agent_id: call.agent_id,
                     });
                     router.push(`/call/${res.data.id}`);
                   } catch {

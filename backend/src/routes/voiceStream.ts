@@ -13,6 +13,7 @@ import { db } from '../db/index.js';
 import { calls } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { VoiceBridge, activeCalls } from '../services/voiceBridge.js';
+import { callContextMap } from './webhooks.js';
 
 const STREAM_PATH = '/voice/stream';
 
@@ -104,6 +105,10 @@ async function handleConnection(
     return;
   }
 
+  // Read context from webhook pipeline
+  const ctx = callContextMap.get(callControlId);
+  callContextMap.delete(callControlId);
+
   // Create bridge and start
   const bridge = new VoiceBridge(
     callControlId,
@@ -112,6 +117,12 @@ async function handleConnection(
     callRecord.fromNumber ?? '',
     callRecord.toNumber ?? '',
     callRecord.id,
+    {
+      afterHours: ctx?.afterHours ?? false,
+      screened: ctx?.screened ?? false,
+      endingMessage: ctx?.endingMessage,
+      forwardToNumber: ctx?.forwardToNumber,
+    },
   );
 
   activeCalls.set(callControlId, bridge);

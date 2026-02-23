@@ -28,6 +28,7 @@ const businessHoursSchema = z.object({
 const callForwardingSchema = z.object({
   enabled: z.boolean(),
   forward_to_number: z.string().max(50).nullable().optional(),
+  forward_mode: z.enum(['always', 'busy', 'no_answer', 'after_hours']).optional(),
   ring_count: z.number().int().min(1).max(20).optional(),
 });
 
@@ -276,13 +277,14 @@ router.get(
         .limit(1);
 
       if (!row) {
-        res.json({ enabled: false, forward_to_number: null, ring_count: 4 });
+        res.json({ enabled: false, forward_to_number: null, forward_mode: 'no_answer', ring_count: 4 });
         return;
       }
 
       res.json({
         enabled: row.enabled,
         forward_to_number: row.forwardToNumber ?? null,
+        forward_mode: row.forwardMode,
         ring_count: row.ringCount,
       });
     } catch (err) {
@@ -313,6 +315,7 @@ router.put(
         enabled: body.enabled,
       };
       if (body.forward_to_number !== undefined) values.forwardToNumber = body.forward_to_number;
+      if (body.forward_mode !== undefined) values.forwardMode = body.forward_mode;
       if (body.ring_count !== undefined) values.ringCount = body.ring_count;
 
       let row;
@@ -329,6 +332,7 @@ router.put(
             workspaceId,
             enabled: body.enabled,
             forwardToNumber: (body.forward_to_number as string | null) ?? null,
+            forwardMode: body.forward_mode ?? 'no_answer',
             ringCount: body.ring_count ?? 4,
           })
           .returning();
@@ -337,6 +341,7 @@ router.put(
       res.json({
         enabled: row.enabled,
         forward_to_number: row.forwardToNumber ?? null,
+        forward_mode: row.forwardMode,
         ring_count: row.ringCount,
       });
     } catch (err) {
