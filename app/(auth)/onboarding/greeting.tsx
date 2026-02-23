@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { YStack, XStack, Text, TextArea, Button } from 'tamagui';
 import { ArrowLeft, Volume2 } from 'lucide-react-native';
+import * as Speech from 'expo-speech';
 import { colors } from '../../../constants/theme';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/authStore';
@@ -16,6 +17,7 @@ export default function GreetingScreen() {
   const { workspaceId } = useAuthStore();
   const [greeting, setGreeting] = useState(DEFAULT_GREETING);
   const [saving, setSaving] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const handleContinue = async () => {
     if (!workspaceId) {
@@ -101,19 +103,31 @@ export default function GreetingScreen() {
             {/* Preview Button */}
             <Button
               size="$4"
-              backgroundColor={colors.backgroundSecondary}
+              backgroundColor={isSpeaking ? colors.primaryLight : colors.backgroundSecondary}
               color={colors.textPrimary}
               borderRadius="$4"
               fontWeight="600"
               borderWidth={1}
               borderColor={colors.border}
-              icon={<Volume2 size={18} color={colors.textPrimary} />}
+              icon={<Volume2 size={18} color={isSpeaking ? colors.primary : colors.textPrimary} />}
               pressStyle={{ backgroundColor: colors.surfaceSecondary }}
-              onPress={() => {
-                // Placeholder - would play TTS preview
+              onPress={async () => {
+                const speaking = await Speech.isSpeakingAsync();
+                if (speaking) {
+                  Speech.stop();
+                  setIsSpeaking(false);
+                } else {
+                  setIsSpeaking(true);
+                  Speech.speak(greeting, {
+                    language: 'en-US',
+                    rate: 0.9,
+                    onDone: () => setIsSpeaking(false),
+                    onStopped: () => setIsSpeaking(false),
+                  });
+                }
               }}
             >
-              Preview Voice
+              {isSpeaking ? 'Stop Preview' : 'Preview Voice'}
             </Button>
 
             {/* Continue */}

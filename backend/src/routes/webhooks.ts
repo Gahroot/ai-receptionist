@@ -185,7 +185,13 @@ async function handleCallInitiated(payload: Record<string, unknown> & {
     phoneRecord.workspaceId,
     'Incoming Call',
     `${callerName} is calling`,
-    { callId: callRecord.id, type: 'incoming_call' },
+    {
+      callId: callRecord.id,
+      type: 'incoming_call',
+      screen: `/call/${callRecord.id}?mode=ringing`,
+      callerName,
+      callerNumber: fromNumber,
+    },
   ).catch((err) => console.error('[webhook] Push notification failed:', err));
 
   // 6. Answer call + start streaming in a single command

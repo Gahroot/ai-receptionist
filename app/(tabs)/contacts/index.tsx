@@ -3,10 +3,11 @@ import { SectionList, RefreshControl, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { YStack, XStack, Text, Input, Spinner, Button } from 'tamagui';
-import { Search, UserPlus } from 'lucide-react-native';
+import { Search, UserPlus, Users } from 'lucide-react-native';
 import { colors } from '../../../constants/theme';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/authStore';
+import { EmptyState } from '../../../components/EmptyState';
 import type { Contact, PaginatedContacts } from '../../../lib/types';
 
 function getInitials(contact: Contact): string {
@@ -206,11 +207,13 @@ export default function ContactsScreen() {
             />
           )}
           ListEmptyComponent={
-            <YStack alignItems="center" paddingVertical="$6" paddingHorizontal="$4">
-              <Text fontSize={14} color={colors.textTertiary} textAlign="center">
-                No contacts found. Tap the + button to add a new contact.
-              </Text>
-            </YStack>
+            <EmptyState
+              icon={<Users size={28} color={colors.primary} />}
+              title="No contacts yet"
+              description="Add your first contact to get started"
+              actionLabel="Add Contact"
+              onAction={() => router.push('/(tabs)/contacts/new')}
+            />
           }
           refreshControl={
             <RefreshControl

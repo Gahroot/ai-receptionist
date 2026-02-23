@@ -7,11 +7,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { PenSquare, Search } from 'lucide-react-native';
+import { MessageCircle, PenSquare, Search } from 'lucide-react-native';
 import { Input, Text, View, XStack, YStack } from 'tamagui';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/authStore';
 import { colors, spacing } from '../../../constants/theme';
+import { EmptyState } from '../../../components/EmptyState';
 import type { ConversationSummary, PaginatedConversations } from '../../../lib/types';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -253,11 +254,19 @@ export default function MessagesScreen() {
           />
         )}
         ListEmptyComponent={
-          <YStack flex={1} alignItems="center" justifyContent="center" paddingTop={80}>
-            <Text color={colors.textTertiary} fontSize={15}>
-              {loading ? 'Loading conversations...' : 'No conversations yet'}
-            </Text>
-          </YStack>
+          loading ? (
+            <YStack flex={1} alignItems="center" justifyContent="center" paddingTop={80}>
+              <Text color={colors.textTertiary} fontSize={15}>
+                Loading conversations...
+              </Text>
+            </YStack>
+          ) : (
+            <EmptyState
+              icon={<MessageCircle size={28} color={colors.primary} />}
+              title="No conversations yet"
+              description="Messages from callers will appear here"
+            />
+          )
         }
         contentContainerStyle={
           filteredConversations.length === 0 ? { flex: 1 } : undefined

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { FlatList, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { YStack, XStack, Text, Card, Button, Spinner } from 'tamagui';
+import { YStack, XStack, Text, Button, Spinner } from 'tamagui';
 import {
   Phone,
   MessageCircle,
@@ -12,13 +12,14 @@ import {
   Search,
   Sparkles,
   ChevronRight,
-  TrendingUp,
-  TrendingDown,
+  Activity,
 } from 'lucide-react-native';
 import { format } from 'date-fns';
 import { colors } from '../../constants/theme';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
+import { StatCard } from '../../components/StatCard';
+import { EmptyState } from '../../components/EmptyState';
 import type { DashboardResponse, RecentActivity } from '../../lib/types';
 
 function getGreeting(): string {
@@ -26,69 +27,6 @@ function getGreeting(): string {
   if (hour < 12) return 'Good morning';
   if (hour < 18) return 'Good afternoon';
   return 'Good evening';
-}
-
-interface StatCardProps {
-  label: string;
-  value: number;
-  change: string;
-  icon: React.ReactNode;
-  iconBg: string;
-}
-
-function StatCard({ label, value, change, icon, iconBg }: StatCardProps) {
-  const isPositive = change.startsWith('+');
-  const isNeutral = change === '0%' || change === '+0%';
-
-  return (
-    <Card
-      flex={1}
-      padding="$3"
-      backgroundColor="$background"
-      borderRadius="$4"
-      borderWidth={1}
-      borderColor={colors.borderLight}
-      elevation={2}
-      size="$2"
-    >
-      <YStack gap="$2">
-        <XStack justifyContent="space-between" alignItems="center">
-          <YStack
-            width={36}
-            height={36}
-            borderRadius="$3"
-            backgroundColor={iconBg}
-            alignItems="center"
-            justifyContent="center"
-          >
-            {icon}
-          </YStack>
-        </XStack>
-        <Text fontSize={20} fontWeight="700" color={colors.textPrimary}>
-          {value}
-        </Text>
-        <Text fontSize={11} color={colors.textSecondary} numberOfLines={1}>
-          {label}
-        </Text>
-        {!isNeutral && (
-          <XStack alignItems="center" gap="$1">
-            {isPositive ? (
-              <TrendingUp size={12} color={colors.success} />
-            ) : (
-              <TrendingDown size={12} color={colors.error} />
-            )}
-            <Text
-              fontSize={11}
-              color={isPositive ? colors.success : colors.error}
-              fontWeight="600"
-            >
-              {change}
-            </Text>
-          </XStack>
-        )}
-      </YStack>
-    </Card>
-  );
 }
 
 function ActivityItem({ item }: { item: RecentActivity }) {
@@ -318,11 +256,11 @@ export default function DashboardScreen() {
         renderItem={({ item }) => <ActivityItem item={item} />}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={
-          <YStack alignItems="center" paddingVertical="$6" paddingHorizontal="$4">
-            <Text fontSize={14} color={colors.textTertiary} textAlign="center">
-              No recent activity yet. Start by making a call or sending a message.
-            </Text>
-          </YStack>
+          <EmptyState
+            icon={<Activity size={28} color={colors.primary} />}
+            title="No recent activity"
+            description="Start by making a call or sending a message"
+          />
         }
         ItemSeparatorComponent={() => (
           <YStack

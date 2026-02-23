@@ -1,9 +1,9 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { YStack, XStack, Text, H2, Button, ScrollView } from 'tamagui';
-import { PhoneOff, Mic, MicOff, Volume2, VolumeX } from 'lucide-react-native';
+import { PhoneOff, Phone, Mic, MicOff, Volume2, VolumeX } from 'lucide-react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -29,10 +29,13 @@ const PULSE_CONFIGS = {
 
 export default function CallScreen() {
   const router = useRouter();
-  const { callId, agentId: routeAgentId } = useLocalSearchParams<{
+  const { callId, agentId: routeAgentId, mode } = useLocalSearchParams<{
     callId: string;
     agentId?: string;
+    mode?: string;
   }>();
+
+  const isRinging = mode === 'ringing';
 
   const {
     contactName,
@@ -42,9 +45,12 @@ export default function CallScreen() {
     isAiSpeaking,
     isUserSpeaking,
     transcript,
+    incomingCallerName,
+    incomingCallerNumber,
     startCall: storeStartCall,
     endCall: storeEndCall,
     incrementDuration,
+    clearIncomingCall,
   } = useCallStore();
 
   const { startCall, endCall, toggleMute, toggleSpeaker } = useVoiceSession();
@@ -53,6 +59,8 @@ export default function CallScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const durationRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasStartedRef = useRef(false);
+
+  const [accepted, setAccepted] = useState(false);
 
   // Determine current speaking state
   const speakingState = isAiSpeaking ? 'aiSpeaking' : isUserSpeaking ? 'userSpeaking' : 'idle';
@@ -78,6 +86,70 @@ export default function CallScreen() {
     transform: [{ scale: pulseScale.value }],
   }));
 
+  // Ringing animation values
+  const ring1Scale = useSharedValue(1);
+  const ring2Scale = useSharedValue(1);
+  const ring3Scale = useSharedValue(1);
+  const ring1Opacity = useSharedValue(0.6);
+  const ring2Opacity = useSharedValue(0.4);
+  const ring3Opacity = useSharedValue(0.2);
+
+  useEffect(() => {
+    if (!isRinging) return;
+
+    // Ring 1 - innermost
+    ring1Scale.value = withRepeat(
+      withTiming(1.8, { duration: 1500, easing: Easing.out(Easing.ease) }),
+      -1, false
+    );
+    ring1Opacity.value = withRepeat(
+      withTiming(0, { duration: 1500, easing: Easing.out(Easing.ease) }),
+      -1, false
+    );
+
+    // Ring 2 - middle (delayed)
+    const timer2 = setTimeout(() => {
+      ring2Scale.value = withRepeat(
+        withTiming(2.2, { duration: 1500, easing: Easing.out(Easing.ease) }),
+        -1, false
+      );
+      ring2Opacity.value = withRepeat(
+        withTiming(0, { duration: 1500, easing: Easing.out(Easing.ease) }),
+        -1, false
+      );
+    }, 400);
+
+    // Ring 3 - outermost (more delayed)
+    const timer3 = setTimeout(() => {
+      ring3Scale.value = withRepeat(
+        withTiming(2.6, { duration: 1500, easing: Easing.out(Easing.ease) }),
+        -1, false
+      );
+      ring3Opacity.value = withRepeat(
+        withTiming(0, { duration: 1500, easing: Easing.out(Easing.ease) }),
+        -1, false
+      );
+    }, 800);
+
+    return () => {
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+    };
+  }, [isRinging, ring1Scale, ring1Opacity, ring2Scale, ring2Opacity, ring3Scale, ring3Opacity]);
+
+  const ring1Style = useAnimatedStyle(() => ({
+    transform: [{ scale: ring1Scale.value }],
+    opacity: ring1Opacity.value,
+  }));
+  const ring2Style = useAnimatedStyle(() => ({
+    transform: [{ scale: ring2Scale.value }],
+    opacity: ring2Opacity.value,
+  }));
+  const ring3Style = useAnimatedStyle(() => ({
+    transform: [{ scale: ring3Scale.value }],
+    opacity: ring3Opacity.value,
+  }));
+
   // Format duration as mm:ss
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -98,8 +170,9 @@ export default function CallScreen() {
       ? '#4ADE80'
       : '#64748B';
 
-  // Start the call on mount
+  // Start the call on mount (skip if ringing)
   useEffect(() => {
+    if (isRinging) return;
     if (hasStartedRef.current) return;
     hasStartedRef.current = true;
 
@@ -183,6 +256,144 @@ export default function CallScreen() {
   const handleToggleMute = useCallback(() => {
     toggleMute();
   }, [toggleMute]);
+
+  const handleAcceptCall = useCallback(() => {
+    setAccepted(true);
+    clearIncomingCall();
+
+    const initAcceptedCall = async () => {
+      const granted = hasPermission ?? (await requestPermission());
+      if (!granted) {
+        Alert.alert('Microphone Required', 'Voice calls require microphone access.',
+          [{ text: 'OK', onPress: () => router.back() }]);
+        return;
+      }
+
+      let agentToUse = routeAgentId;
+      if (!agentToUse) {
+        try {
+          const response = await api.get('/agents');
+          const agents: Agent[] = response.data?.items || response.data || [];
+          if (agents.length > 0) { agentToUse = agents[0].id; }
+        } catch (e) { console.error('[CallScreen] Failed to fetch agents:', e); }
+      }
+
+      if (!agentToUse) { router.back(); return; }
+
+      storeStartCall({
+        callId: callId || undefined,
+        contactName: incomingCallerName || 'Unknown',
+        contactNumber: incomingCallerNumber || undefined,
+      });
+      await startCall(agentToUse);
+      durationRef.current = setInterval(() => { incrementDuration(); }, 1000);
+    };
+
+    initAcceptedCall();
+  }, [clearIncomingCall, hasPermission, requestPermission, routeAgentId, callId, incomingCallerName, incomingCallerNumber, storeStartCall, startCall, incrementDuration, router]);
+
+  const handleDeclineCall = useCallback(() => {
+    clearIncomingCall();
+    router.back();
+  }, [clearIncomingCall, router]);
+
+  // Ringing UI
+  if (isRinging && !accepted) {
+    const displayCallerName = incomingCallerName || 'Unknown Caller';
+    const displayCallerNumber = incomingCallerNumber || '';
+
+    return (
+      <SafeAreaView style={styles.container}>
+        <YStack flex={1} padding="$4" justifyContent="space-between" alignItems="center">
+          {/* Top - Incoming Call label */}
+          <YStack alignItems="center" paddingTop="$8" gap="$2">
+            <Text color="#94A3B8" fontSize={16} fontWeight="500" textTransform="uppercase" letterSpacing={2}>
+              Incoming Call
+            </Text>
+          </YStack>
+
+          {/* Center - Pulsing avatar with rings */}
+          <YStack alignItems="center" justifyContent="center" flex={1} gap="$4">
+            {/* Animated rings */}
+            <YStack alignItems="center" justifyContent="center" width={200} height={200}>
+              <Animated.View style={[styles.ringCircle, ring3Style]} />
+              <Animated.View style={[styles.ringCircle, ring2Style]} />
+              <Animated.View style={[styles.ringCircle, ring1Style]} />
+              {/* Avatar circle */}
+              <YStack
+                width={100}
+                height={100}
+                borderRadius={50}
+                backgroundColor="rgba(0, 102, 255, 0.3)"
+                alignItems="center"
+                justifyContent="center"
+              >
+                <YStack
+                  width={72}
+                  height={72}
+                  borderRadius={36}
+                  backgroundColor="#0066FF"
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <Text color="white" fontSize={28} fontWeight="700">
+                    {displayCallerName[0].toUpperCase()}
+                  </Text>
+                </YStack>
+              </YStack>
+            </YStack>
+
+            {/* Caller info */}
+            <YStack alignItems="center" gap="$1">
+              <H2 color="white" fontWeight="700">
+                {displayCallerName}
+              </H2>
+              {displayCallerNumber ? (
+                <Text color="#94A3B8" fontSize={16}>
+                  {displayCallerNumber}
+                </Text>
+              ) : null}
+            </YStack>
+          </YStack>
+
+          {/* Bottom - Accept/Decline buttons */}
+          <XStack gap="$8" paddingBottom="$8">
+            {/* Decline */}
+            <YStack alignItems="center" gap="$2">
+              <Button
+                circular
+                size="$7"
+                backgroundColor="#EF4444"
+                pressStyle={{ opacity: 0.7 }}
+                onPress={handleDeclineCall}
+              >
+                <PhoneOff size={32} color="white" />
+              </Button>
+              <Text color="#94A3B8" fontSize={13}>
+                Decline
+              </Text>
+            </YStack>
+
+            {/* Accept */}
+            <YStack alignItems="center" gap="$2">
+              <Button
+                circular
+                size="$7"
+                backgroundColor="#22C55E"
+                pressStyle={{ opacity: 0.7 }}
+                onPress={handleAcceptCall}
+              >
+                <Phone size={32} color="white" />
+              </Button>
+              <Text color="#94A3B8" fontSize={13}>
+                Accept
+              </Text>
+            </YStack>
+          </XStack>
+        </YStack>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -326,5 +537,13 @@ const styles = StyleSheet.create({
   pulseCircle: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  ringCircle: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    borderWidth: 2,
+    borderColor: '#0088FF',
   },
 });

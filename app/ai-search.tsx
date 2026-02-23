@@ -98,9 +98,9 @@ export default function AISearchScreen() {
 
   const handleSourcePress = (source: AISearchResult['sources'][number]) => {
     if (source.type === 'call') {
-      router.push(`/call/${source.id}`);
+      router.push(`/(tabs)/calls/${source.id}`);
     } else if (source.type === 'message' || source.type === 'conversation') {
-      router.push(`/conversation/${source.id}`);
+      router.push(`/(tabs)/messages/${source.id}`);
     }
   };
 

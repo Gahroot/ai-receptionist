@@ -11,21 +11,27 @@ import { useAudioPreview } from '../../../hooks/useAudioPreview';
 import type { Agent, VoiceOption } from '../../../lib/types';
 
 const VOICES: VoiceOption[] = [
-  { id: 'alloy', label: 'Alloy', description: 'Neutral and balanced', tags: ['neutral', 'professional'], preview_url: null },
-  { id: 'shimmer', label: 'Shimmer', description: 'Warm and expressive', tags: ['warm', 'expressive'], preview_url: null },
-  { id: 'nova', label: 'Nova', description: 'Friendly and upbeat', tags: ['friendly', 'warm'], preview_url: null },
-  { id: 'echo', label: 'Echo', description: 'Smooth and clear', tags: ['professional', 'calm'], preview_url: null },
-  { id: 'onyx', label: 'Onyx', description: 'Deep and authoritative', tags: ['professional', 'authoritative'], preview_url: null },
-  { id: 'fable', label: 'Fable', description: 'Storytelling and narrative', tags: ['warm', 'expressive'], preview_url: null },
-  { id: 'coral', label: 'Coral', description: 'Conversational and natural', tags: ['friendly', 'casual'], preview_url: null },
-  { id: 'sage', label: 'Sage', description: 'Calm and knowledgeable', tags: ['calm', 'professional'], preview_url: null },
-  { id: 'ash', label: 'Ash', description: 'Crisp and direct', tags: ['professional', 'neutral'], preview_url: null },
-  { id: 'ballad', label: 'Ballad', description: 'Melodic and soothing', tags: ['warm', 'calm'], preview_url: null },
-  { id: 'verse', label: 'Verse', description: 'Articulate and refined', tags: ['professional', 'authoritative'], preview_url: null },
-  { id: 'juniper', label: 'Juniper', description: 'Bright and energetic', tags: ['friendly', 'expressive'], preview_url: null },
+  { id: 'Ara', label: 'Ara', description: 'Warm and conversational', tags: ['warm', 'friendly'], preview_url: null },
+  { id: 'Eve', label: 'Eve', description: 'Energetic and engaging', tags: ['friendly', 'expressive'], preview_url: null },
+  { id: 'Sal', label: 'Sal', description: 'Neutral and versatile', tags: ['neutral', 'professional'], preview_url: null },
+  { id: 'Leo', label: 'Leo', description: 'Authoritative and commanding', tags: ['professional', 'authoritative'], preview_url: null },
+  { id: 'Rex', label: 'Rex', description: 'Confident and articulate', tags: ['professional', 'expressive'], preview_url: null },
 ];
 
-const ALL_TAGS = ['All', 'Professional', 'Warm', 'Friendly', 'Calm', 'Expressive', 'Neutral', 'Authoritative', 'Casual'];
+const ALL_TAGS = ['All', 'Professional', 'Warm', 'Friendly', 'Neutral', 'Expressive', 'Authoritative'];
+
+/** Map legacy OpenAI voice IDs to Grok-native names */
+const LEGACY_VOICE_MAP: Record<string, string> = {
+  alloy: 'Sal',
+  shimmer: 'Ara',
+  nova: 'Eve',
+  echo: 'Leo',
+  onyx: 'Rex',
+};
+
+function normalizeVoiceId(voiceId: string): string {
+  return LEGACY_VOICE_MAP[voiceId] ?? voiceId;
+}
 
 export default function AIConfigScreen() {
   const router = useRouter();
@@ -36,7 +42,7 @@ export default function AIConfigScreen() {
   const [saving, setSaving] = useState(false);
   const [selectedTag, setSelectedTag] = useState('All');
 
-  const [voice, setVoice] = useState('alloy');
+  const [voice, setVoice] = useState('Ara');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [greeting, setGreeting] = useState('');
   const [temperature, setTemperature] = useState(0.7);
@@ -54,7 +60,7 @@ export default function AIConfigScreen() {
       const active = (agents as Agent[]).find((a) => a.is_active) || (agents as Agent[])[0];
       if (active) {
         setAgent(active);
-        setVoice(active.voice_id);
+        setVoice(normalizeVoiceId(active.voice_id));
         setSystemPrompt(active.system_prompt);
         setGreeting(active.initial_greeting || '');
         setTemperature(active.temperature);

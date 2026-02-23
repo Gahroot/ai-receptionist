@@ -19,6 +19,9 @@ import settingsRoutes from './routes/settings.js';
 import voiceRoutes from './routes/voice.js';
 import knowledgeBaseRoutes from './routes/knowledgeBase.js';
 import webhookRoutes from './routes/webhooks.js';
+import phoneNumberRoutes from './routes/phoneNumbers.js';
+import dailyRecapRoutes from './routes/dailyRecap.js';
+import aiSearchRoutes from './routes/aiSearch.js';
 
 const app = express();
 
@@ -69,6 +72,9 @@ app.use('/api/v1/workspaces/:workspaceId/contacts', contactRoutes);
 // Calls: /api/v1/workspaces/:workspaceId/calls/*
 app.use('/api/v1/workspaces', callRoutes);
 
+// Phone Numbers: /api/v1/workspaces/:workspaceId/phone-numbers/*
+app.use('/api/v1/workspaces', phoneNumberRoutes);
+
 // Conversations: /api/v1/workspaces/:workspaceId/conversations/*
 app.use('/api/v1', conversationRoutes);
 
@@ -80,6 +86,12 @@ app.use('/api/v1', voiceRoutes);
 
 // Knowledge Base: /api/v1/workspaces/:workspaceId/knowledge-base/*
 app.use('/api/v1/workspaces/:workspaceId/knowledge-base', knowledgeBaseRoutes);
+
+// Daily Recap: /api/v1/workspaces/:workspaceId/daily-recap/*
+app.use('/api/v1/workspaces/:workspaceId/daily-recap', dailyRecapRoutes);
+
+// AI Search: /api/v1/workspaces/:workspaceId/ai/*
+app.use('/api/v1/workspaces/:workspaceId/ai', aiSearchRoutes);
 
 // ─── Error Handling ───────────────────────────────────────────────────────────
 

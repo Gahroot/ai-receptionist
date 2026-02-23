@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db/index.js';
-import { agents, workspaceMemberships } from '../db/schema.js';
+import { agents, workspaceMemberships, calls, messages } from '../db/schema.js';
 import { requireAuth, requireWorkspaceMember } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { AppError } from '../lib/errors.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, count } from 'drizzle-orm';
 
 const router = Router();
 
@@ -40,7 +40,11 @@ const updateAgentSchema = z.object({
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function formatAgent(row: typeof agents.$inferSelect) {
+function formatAgent(
+  row: typeof agents.$inferSelect,
+  totalCalls = 0,
+  totalMessages = 0
+) {
   return {
     id: row.id,
     workspace_id: row.workspaceId,
@@ -55,10 +59,21 @@ function formatAgent(row: typeof agents.$inferSelect) {
     max_tokens: row.maxTokens,
     initial_greeting: row.initialGreeting ?? null,
     is_active: row.isActive,
-    total_calls: 0,
-    total_messages: 0,
+    total_calls: totalCalls,
+    total_messages: totalMessages,
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),
+  };
+}
+
+async function getAgentStats(agentId: string) {
+  const [[callsResult], [messagesResult]] = await Promise.all([
+    db.select({ value: count() }).from(calls).where(eq(calls.agentId, agentId)),
+    db.select({ value: count() }).from(messages).where(eq(messages.agentId, agentId)),
+  ]);
+  return {
+    totalCalls: callsResult?.value ?? 0,
+    totalMessages: messagesResult?.value ?? 0,
   };
 }
 
@@ -78,7 +93,14 @@ router.get(
         .where(eq(agents.workspaceId, workspaceId))
         .orderBy(agents.createdAt);
 
-      res.json(rows.map(formatAgent));
+      const items = await Promise.all(
+        rows.map(async (row) => {
+          const stats = await getAgentStats(row.id);
+          return formatAgent(row, stats.totalCalls, stats.totalMessages);
+        })
+      );
+
+      res.json(items);
     } catch (err) {
       next(err);
     }
@@ -213,7 +235,8 @@ router.get(
         throw new AppError(404, 'No agent found');
       }
 
-      res.json(formatAgent(agent));
+      const stats = await getAgentStats(agent.id);
+      res.json(formatAgent(agent, stats.totalCalls, stats.totalMessages));
     } catch (err) {
       next(err);
     }

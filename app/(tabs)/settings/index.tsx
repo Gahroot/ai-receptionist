@@ -7,6 +7,7 @@ import {
   ShieldCheck,
   BookOpen,
   Clock,
+  Phone,
   PhoneForwarded,
   Bell,
   User,
@@ -131,6 +132,12 @@ export default function SettingsScreen() {
             icon={<PhoneForwarded size={22} color={colors.success} />}
             label="Call Forwarding"
             onPress={() => router.push('/(tabs)/settings/call-forwarding')}
+          />
+          <Separator borderColor={colors.borderLight} />
+          <MenuItem
+            icon={<Phone size={22} color={colors.primary} />}
+            label="Phone Numbers"
+            onPress={() => router.push('/(tabs)/settings/phone-numbers')}
           />
           <Separator borderColor={colors.borderLight} />
           <MenuItem

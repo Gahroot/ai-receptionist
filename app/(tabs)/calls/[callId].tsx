@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { ActivityIndicator, Alert } from 'react-native';
 import { YStack, XStack, Text, Button, ScrollView, Separator, Spinner } from 'tamagui';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import {
   ArrowLeft,
   PhoneIncoming,
@@ -25,6 +26,7 @@ import { colors } from '../../../constants/theme';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/authStore';
 import { useVoicemailStore } from '../../../stores/voicemailStore';
+import { StatusBadge } from '../../../components/StatusBadge';
 import type { CallResponse, CallSummary, TranscriptEntry, ActionItem } from '../../../lib/types';
 
 function formatDuration(seconds: number | null): string {
@@ -32,71 +34,6 @@ function formatDuration(seconds: number | null): string {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
-
-function StatusBadge({ status }: { status: string }) {
-  let bg: string = colors.surfaceSecondary;
-  let textColor: string = colors.textSecondary;
-
-  if (status === 'completed') {
-    bg = '#DCFCE7';
-    textColor = '#16A34A';
-  } else if (status === 'no_answer') {
-    bg = '#FEE2E2';
-    textColor = '#DC2626';
-  } else if (status === 'in_progress') {
-    bg = '#FEF3C7';
-    textColor = '#D97706';
-  } else if (status === 'voicemail') {
-    bg = colors.secondaryLight;
-    textColor = colors.secondary;
-  }
-
-  return (
-    <XStack
-      backgroundColor={bg}
-      paddingHorizontal="$2"
-      paddingVertical="$1"
-      borderRadius="$2"
-    >
-      <Text fontSize={12} fontWeight="600" color={textColor}>
-        {status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-      </Text>
-    </XStack>
-  );
-}
-
-function SentimentBadge({ sentiment }: { sentiment: CallSummary['sentiment'] }) {
-  let bg: string;
-  let textColor: string;
-  let label: string;
-
-  if (sentiment === 'positive') {
-    bg = '#DCFCE7';
-    textColor = '#16A34A';
-    label = 'Positive';
-  } else if (sentiment === 'negative') {
-    bg = '#FEE2E2';
-    textColor = '#DC2626';
-    label = 'Negative';
-  } else {
-    bg = colors.surfaceSecondary;
-    textColor = colors.textSecondary;
-    label = 'Neutral';
-  }
-
-  return (
-    <XStack
-      backgroundColor={bg}
-      paddingHorizontal="$2"
-      paddingVertical="$1"
-      borderRadius="$2"
-    >
-      <Text fontSize={12} fontWeight="600" color={textColor}>
-        {label}
-      </Text>
-    </XStack>
-  );
 }
 
 function DirectionIcon({ call }: { call: CallResponse }) {
@@ -462,73 +399,75 @@ export default function CallDetailScreen() {
               </XStack>
 
               {summary ? (
-                <YStack
-                  backgroundColor={colors.surfaceSecondary}
-                  borderRadius="$4"
-                  padding="$3"
-                  gap="$3"
-                >
-                  {/* Summary text */}
-                  <Text fontSize={14} color={colors.textPrimary} lineHeight={22}>
-                    {summary.summary}
-                  </Text>
-
-                  {/* Key topics */}
-                  {summary.key_topics.length > 0 && (
-                    <XStack flexWrap="wrap" gap="$1.5">
-                      {summary.key_topics.map((topic) => (
-                        <XStack
-                          key={topic}
-                          backgroundColor={colors.primaryLight}
-                          paddingHorizontal="$2"
-                          paddingVertical="$1"
-                          borderRadius="$6"
-                        >
-                          <Text fontSize={12} fontWeight="500" color={colors.primary}>
-                            {topic}
-                          </Text>
-                        </XStack>
-                      ))}
-                    </XStack>
-                  )}
-
-                  {/* Sentiment */}
-                  <XStack alignItems="center" gap="$2">
-                    <Text fontSize={13} color={colors.textSecondary}>
-                      Sentiment
+                <Animated.View entering={FadeIn.duration(400)}>
+                  <YStack
+                    backgroundColor={colors.surfaceSecondary}
+                    borderRadius="$4"
+                    padding="$3"
+                    gap="$3"
+                  >
+                    {/* Summary text */}
+                    <Text fontSize={14} color={colors.textPrimary} lineHeight={22}>
+                      {summary.summary}
                     </Text>
-                    <SentimentBadge sentiment={summary.sentiment} />
-                  </XStack>
 
-                  {/* Action items */}
-                  {summary.action_items.length > 0 && (
-                    <YStack gap="$1">
-                      <Text fontSize={13} fontWeight="600" color={colors.textSecondary}>
-                        Suggested Actions
-                      </Text>
-                      {summary.action_items.map((item, index) => (
-                        <XStack
-                          key={index}
-                          alignItems="center"
-                          gap="$2"
-                          paddingVertical="$2"
-                          pressStyle={{ opacity: 0.7 }}
-                          onPress={() => handleActionItem(item)}
-                        >
-                          <CheckCircle size={16} color={colors.success} />
-                          <Text
-                            flex={1}
-                            fontSize={14}
-                            color={colors.textPrimary}
+                    {/* Key topics */}
+                    {summary.key_topics.length > 0 && (
+                      <XStack flexWrap="wrap" gap="$1.5">
+                        {summary.key_topics.map((topic) => (
+                          <XStack
+                            key={topic}
+                            backgroundColor={colors.primaryLight}
+                            paddingHorizontal="$2"
+                            paddingVertical="$1"
+                            borderRadius="$6"
                           >
-                            {item.label}
-                          </Text>
-                          <ChevronRight size={16} color={colors.textTertiary} />
-                        </XStack>
-                      ))}
-                    </YStack>
-                  )}
-                </YStack>
+                            <Text fontSize={12} fontWeight="500" color={colors.primary}>
+                              {topic}
+                            </Text>
+                          </XStack>
+                        ))}
+                      </XStack>
+                    )}
+
+                    {/* Sentiment */}
+                    <XStack alignItems="center" gap="$2">
+                      <Text fontSize={13} color={colors.textSecondary}>
+                        Sentiment
+                      </Text>
+                      <StatusBadge status={summary.sentiment} variant="sentiment" />
+                    </XStack>
+
+                    {/* Action items */}
+                    {summary.action_items.length > 0 && (
+                      <YStack gap="$1">
+                        <Text fontSize={13} fontWeight="600" color={colors.textSecondary}>
+                          Suggested Actions
+                        </Text>
+                        {summary.action_items.map((item, index) => (
+                          <XStack
+                            key={index}
+                            alignItems="center"
+                            gap="$2"
+                            paddingVertical="$2"
+                            pressStyle={{ opacity: 0.7 }}
+                            onPress={() => handleActionItem(item)}
+                          >
+                            <CheckCircle size={16} color={colors.success} />
+                            <Text
+                              flex={1}
+                              fontSize={14}
+                              color={colors.textPrimary}
+                            >
+                              {item.label}
+                            </Text>
+                            <ChevronRight size={16} color={colors.textTertiary} />
+                          </XStack>
+                        ))}
+                      </YStack>
+                    )}
+                  </YStack>
+                </Animated.View>
               ) : summaryLoading ? (
                 <YStack
                   backgroundColor={colors.surfaceSecondary}

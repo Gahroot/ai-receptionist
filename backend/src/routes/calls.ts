@@ -4,6 +4,7 @@ import { db } from '../db/index.js';
 import { calls, callSummaries, contacts, agents } from '../db/schema.js';
 import { requireAuth, requireWorkspaceMember } from '../middleware/auth.js';
 import { AppError } from '../lib/errors.js';
+import { grokChatCompletion } from '../services/grokChat.js';
 import { eq, and, desc, sql, count } from 'drizzle-orm';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -297,6 +298,127 @@ router.get(
       if (!summary) {
         throw new AppError(404, 'Summary not found for this call');
       }
+
+      res.json({
+        id: summary.id,
+        call_id: summary.callId,
+        summary: summary.summary,
+        key_topics: summary.keyTopics,
+        action_items: summary.actionItems,
+        sentiment: summary.sentiment,
+        created_at: summary.createdAt.toISOString(),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ─── POST /workspaces/:workspaceId/calls/:callId/summary ────────────────────
+
+router.post(
+  '/:workspaceId/calls/:callId/summary',
+  requireWorkspaceMember(),
+  async (req, res, next) => {
+    try {
+      const workspaceId = req.params.workspaceId as string;
+      const callId = req.params.callId as string;
+
+      // Verify call belongs to workspace and is completed
+      const [call] = await db
+        .select()
+        .from(calls)
+        .where(and(eq(calls.id, callId), eq(calls.workspaceId, workspaceId)))
+        .limit(1);
+
+      if (!call) {
+        throw new AppError(404, 'Call not found');
+      }
+
+      if (call.status !== 'completed') {
+        throw new AppError(422, 'Call must be completed before generating a summary');
+      }
+
+      // Check if summary already exists (idempotent)
+      const [existing] = await db
+        .select()
+        .from(callSummaries)
+        .where(eq(callSummaries.callId, callId))
+        .limit(1);
+
+      if (existing) {
+        res.json({
+          id: existing.id,
+          call_id: existing.callId,
+          summary: existing.summary,
+          key_topics: existing.keyTopics,
+          action_items: existing.actionItems,
+          sentiment: existing.sentiment,
+          created_at: existing.createdAt.toISOString(),
+        });
+        return;
+      }
+
+      // Format transcript for AI
+      let transcriptText = '';
+      if (call.transcript && Array.isArray(call.transcript)) {
+        transcriptText = (call.transcript as { role: string; text: string }[])
+          .map((t) => `${t.role}: ${t.text}`)
+          .join('\n');
+      } else if (call.transcript && typeof call.transcript === 'string') {
+        transcriptText = call.transcript;
+      }
+
+      if (!transcriptText) {
+        throw new AppError(422, 'Call has no transcript to summarize');
+      }
+
+      // Generate summary with Grok
+      const aiResponse = await grokChatCompletion(
+        [
+          {
+            role: 'system',
+            content: `You are a call analysis assistant. Analyze the following call transcript and return a JSON object with:
+- "summary": A concise 2-3 sentence summary of the call
+- "key_topics": An array of key topics discussed (strings)
+- "action_items": An array of action items, each with "type" (one of: follow_up, callback, schedule, info_request) and "label" (short description)
+- "sentiment": Overall sentiment (one of: positive, neutral, negative)
+
+Return ONLY valid JSON.`,
+          },
+          {
+            role: 'user',
+            content: transcriptText,
+          },
+        ],
+        { response_format: { type: 'json_object' } }
+      );
+
+      let parsed: {
+        summary: string;
+        key_topics: string[];
+        action_items: { type: string; label: string }[];
+        sentiment: string;
+      };
+      try {
+        parsed = JSON.parse(aiResponse);
+      } catch {
+        throw new AppError(502, 'Failed to parse AI summary response');
+      }
+
+      const validSentiments = ['positive', 'neutral', 'negative'];
+      const sentiment = validSentiments.includes(parsed.sentiment) ? parsed.sentiment : 'neutral';
+
+      const [summary] = await db
+        .insert(callSummaries)
+        .values({
+          callId,
+          summary: parsed.summary,
+          keyTopics: parsed.key_topics ?? [],
+          actionItems: parsed.action_items ?? [],
+          sentiment,
+        })
+        .returning();
 
       res.json({
         id: summary.id,

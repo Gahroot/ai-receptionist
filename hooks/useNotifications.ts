@@ -3,6 +3,7 @@ import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../stores/authStore';
+import { useCallStore } from '../stores/callStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useVoicemailStore } from '../stores/voicemailStore';
 import {
@@ -70,8 +71,22 @@ export function useNotifications() {
       const title = notification.request.content.title;
       logger.lifecycle('Notifications', 'received', { title });
 
-      // Refresh voicemail unread count on voicemail push
       const data = notification.request.content.data;
+
+      // Handle incoming call notification in foreground
+      if (data?.type === 'incoming_call' && data?.callId) {
+        const callerName = typeof data.callerName === 'string' ? data.callerName : 'Unknown';
+        const callerNumber = typeof data.callerNumber === 'string' ? data.callerNumber : '';
+        useCallStore.getState().setIncomingCall(
+          String(data.callId),
+          callerName,
+          callerNumber,
+        );
+        router.push(`/call/${data.callId}?mode=ringing`);
+        return;
+      }
+
+      // Refresh voicemail unread count on voicemail push
       if (data?.type === 'voicemail' && workspaceId) {
         useVoicemailStore.getState().fetchUnreadCount(workspaceId);
       }

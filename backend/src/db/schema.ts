@@ -283,6 +283,27 @@ export const phoneNumbers = pgTable(
   ]
 );
 
+// ─── Daily Recaps ────────────────────────────────────────────────────────────
+
+export const dailyRecaps = pgTable(
+  'daily_recaps',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    date: varchar('date', { length: 10 }).notNull(), // yyyy-MM-dd
+    summary: text('summary').notNull(),
+    metrics: jsonb('metrics').notNull().default({}),
+    notableInteractions: jsonb('notable_interactions').notNull().default([]),
+    actionItems: jsonb('action_items').notNull().default([]),
+    generatedAt: timestamp('generated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_daily_recap_workspace_date').on(table.workspaceId, table.date),
+  ]
+);
+
 // ─── Knowledge Base (FAQ) ─────────────────────────────────────────────────────
 
 export const knowledgeBase = pgTable(

@@ -15,6 +15,13 @@
       "when": 1771856669200,
       "tag": "0001_fresh_betty_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771885125503,
+      "tag": "0002_colossal_puma",
+      "breakpoints": true
     }
   ]
 }

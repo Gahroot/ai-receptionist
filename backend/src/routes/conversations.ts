@@ -123,12 +123,29 @@ router.get(
             }
           }
 
+          // Count inbound messages newer than the last outbound message
+          const [unreadResult] = await db
+            .select({ value: count() })
+            .from(messages)
+            .where(
+              and(
+                eq(messages.conversationId, row.conversation.id),
+                eq(messages.direction, 'inbound'),
+                sql`${messages.createdAt} > COALESCE(
+                  (SELECT MAX(m2.created_at) FROM messages m2
+                   WHERE m2.conversation_id = ${row.conversation.id}
+                     AND m2.direction = 'outbound'),
+                  '1970-01-01'::timestamptz
+                )`
+              )
+            );
+
           return {
             ...formatConversation(row.conversation),
             contact_name: contactName,
             last_message_at: row.lastMessageAt ?? row.conversation.createdAt.toISOString(),
             last_message_preview: lastMessagePreview,
-            unread_count: 0,
+            unread_count: unreadResult?.value ?? 0,
           };
         })
       );

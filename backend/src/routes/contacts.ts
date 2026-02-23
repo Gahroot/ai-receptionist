@@ -217,4 +217,34 @@ router.put('/:id', validateBody(updateContactSchema), async (req: Request<WsIdPa
   }
 });
 
+// ─── DELETE /workspaces/:workspaceId/contacts/:id ────────────────────────────
+
+router.delete('/:id', async (req: Request<WsIdParams>, res, next) => {
+  try {
+    const { workspaceId } = req.params;
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+      throw new AppError(400, 'Invalid contact ID');
+    }
+
+    const [deleted] = await db
+      .delete(contacts)
+      .where(
+        and(
+          eq(contacts.id, id),
+          eq(contacts.workspaceId, workspaceId),
+        )
+      )
+      .returning({ id: contacts.id });
+
+    if (!deleted) {
+      throw new AppError(404, 'Contact not found');
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

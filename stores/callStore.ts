@@ -13,6 +13,9 @@ interface CallState {
   isAiSpeaking: boolean;
   isUserSpeaking: boolean;
   transcript: TranscriptEntry[];
+  incomingCallId: string | null;
+  incomingCallerName: string | null;
+  incomingCallerNumber: string | null;
 
   startCall: (opts: { callId?: string; contactName?: string; contactNumber?: string }) => void;
   endCall: () => void;
@@ -23,6 +26,8 @@ interface CallState {
   addTranscript: (entry: TranscriptEntry) => void;
   incrementDuration: () => void;
   setCallId: (id: string) => void;
+  setIncomingCall: (callId: string, name: string, number: string) => void;
+  clearIncomingCall: () => void;
 }
 
 export const useCallStore = create<CallState>()((set, get) => ({
@@ -36,6 +41,9 @@ export const useCallStore = create<CallState>()((set, get) => ({
   isAiSpeaking: false,
   isUserSpeaking: false,
   transcript: [],
+  incomingCallId: null,
+  incomingCallerName: null,
+  incomingCallerNumber: null,
 
   startCall: ({ callId, contactName, contactNumber }) => {
     logger.stateChange('Call', 'startCall', { callId, contactName, contactNumber });
@@ -67,6 +75,9 @@ export const useCallStore = create<CallState>()((set, get) => ({
       isAiSpeaking: false,
       isUserSpeaking: false,
       transcript: [],
+      incomingCallId: null,
+      incomingCallerName: null,
+      incomingCallerNumber: null,
     });
   },
 
@@ -97,5 +108,14 @@ export const useCallStore = create<CallState>()((set, get) => ({
   setCallId: (id) => {
     logger.stateChange('Call', 'setCallId', { callId: id });
     return set({ callId: id });
+  },
+
+  setIncomingCall: (callId, name, number) => {
+    logger.stateChange('Call', 'setIncomingCall', { callId, name, number });
+    return set({ incomingCallId: callId, incomingCallerName: name, incomingCallerNumber: number });
+  },
+
+  clearIncomingCall: () => {
+    return set({ incomingCallId: null, incomingCallerName: null, incomingCallerNumber: null });
   },
 }));

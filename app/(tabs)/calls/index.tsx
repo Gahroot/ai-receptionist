@@ -1,9 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { FlatList, ActivityIndicator } from 'react-native';
+import { FlatList, ActivityIndicator, RefreshControl } from 'react-native';
 import { YStack, XStack, Text, Button, Input } from 'tamagui';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Search,
+  Phone,
   PhoneIncoming,
   PhoneOutgoing,
   PhoneMissed,
@@ -16,6 +17,7 @@ import { colors } from '../../../constants/theme';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/authStore';
 import { useVoicemailStore } from '../../../stores/voicemailStore';
+import { EmptyState } from '../../../components/EmptyState';
 import type { CallResponse, PaginatedCalls } from '../../../lib/types';
 
 type FilterType = 'all' | 'inbound' | 'outbound' | 'missed' | 'voicemail';
@@ -353,16 +355,23 @@ export default function CallsScreen() {
             data={calls}
             renderItem={renderCallItem}
             keyExtractor={keyExtractor}
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor={colors.primary}
+              />
+            }
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.3}
             ListEmptyComponent={
-              <YStack flex={1} alignItems="center" justifyContent="center" paddingTop="$10">
-                <Text fontSize={15} color={colors.textTertiary}>
-                  {filter === 'voicemail' ? 'No voicemails found' : 'No calls found'}
-                </Text>
-              </YStack>
+              <EmptyState
+                icon={<Phone size={28} color={colors.primary} />}
+                title={filter === 'voicemail' ? 'No voicemails found' : 'No calls yet'}
+                description="Make a test call to try your AI receptionist"
+                actionLabel="Test Receptionist"
+                onAction={() => router.push('/call/new')}
+              />
             }
             ListFooterComponent={
               loading && page > 1 ? (
