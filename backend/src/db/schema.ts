@@ -134,11 +134,13 @@ export const calls = pgTable(
     isVoicemail: boolean('is_voicemail').notNull().default(false),
     voicemailTranscription: text('voicemail_transcription'),
     isRead: boolean('is_read').notNull().default(false),
+    telnyxCallControlId: varchar('telnyx_call_control_id', { length: 255 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index('idx_calls_workspace').on(table.workspaceId),
     index('idx_calls_created').on(table.createdAt),
+    index('idx_calls_telnyx_ccid').on(table.telnyxCallControlId),
   ]
 );
 
@@ -257,6 +259,29 @@ export const callScope = pgTable('call_scope', {
   ),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ─── Phone Numbers ───────────────────────────────────────────────────────────
+
+export const phoneNumbers = pgTable(
+  'phone_numbers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    phoneNumber: varchar('phone_number', { length: 50 }).notNull().unique(),
+    label: varchar('label', { length: 255 }),
+    provider: varchar('provider', { length: 50 }).notNull().default('telnyx'),
+    providerResourceId: varchar('provider_resource_id', { length: 255 }),
+    agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_phone_numbers_workspace').on(table.workspaceId),
+  ]
+);
 
 // ─── Knowledge Base (FAQ) ─────────────────────────────────────────────────────
 

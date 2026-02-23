@@ -1,7 +1,9 @@
+import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
 import { config } from './config.js';
 import { notFound, errorHandler } from './lib/errors.js';
+import { setupWebSocketServer } from './routes/voiceStream.js';
 
 // Route imports
 import authRoutes from './routes/auth.js';
@@ -13,12 +15,18 @@ import conversationRoutes from './routes/conversations.js';
 import settingsRoutes from './routes/settings.js';
 import voiceRoutes from './routes/voice.js';
 import knowledgeBaseRoutes from './routes/knowledgeBase.js';
+import webhookRoutes from './routes/webhooks.js';
 
 const app = express();
 
 // ─── Global Middleware ────────────────────────────────────────────────────────
 
 app.use(cors());
+
+// Mount Telnyx webhooks BEFORE express.json() — they need raw body for signature verification
+app.use('/api/v1/webhooks/telnyx/voice', webhookRoutes);
+
+// JSON parsing for all other routes
 app.use(express.json());
 
 // ─── Health check ─────────────────────────────────────────────────────────────
@@ -63,6 +71,9 @@ app.use(errorHandler);
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
-app.listen(config.port, () => {
+const server = createServer(app);
+setupWebSocketServer(server);
+
+server.listen(config.port, () => {
   console.log(`Server running on http://localhost:${config.port}`);
 });

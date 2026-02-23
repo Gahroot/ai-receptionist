@@ -77,6 +77,16 @@ async function seed() {
     .returning();
   console.log(`Created agent: ${agent.name} (id: ${agent.id})`);
 
+  // 4b. Create phone number
+  await db.insert(schema.phoneNumbers).values({
+    workspaceId: workspace.id,
+    phoneNumber: '+12485309314',
+    label: 'Main Line',
+    provider: 'telnyx',
+    agentId: agent.id,
+  });
+  console.log('Created phone number: +12485309314');
+
   // 5. Create sample contacts
   const contactData = [
     { firstName: 'John', lastName: 'Smith', phone: '+15551000001', email: 'john@example.com', company: 'Acme Corp' },

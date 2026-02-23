@@ -17,4 +17,11 @@ export const config = {
   xaiApiKey: process.env.XAI_API_KEY || '',
   accessTokenExpiry: '15m',
   refreshTokenExpiry: '30d',
+
+  // Telnyx telephony
+  telnyxApiKey: process.env.TELNYX_API_KEY || '',
+  telnyxPublicKey: process.env.TELNYX_PUBLIC_KEY || '',
+  telnyxConnectionId: process.env.TELNYX_CONNECTION_ID || '',
+  apiBaseUrl: process.env.API_BASE_URL || '',
+  skipWebhookVerification: process.env.SKIP_WEBHOOK_VERIFICATION === 'true',
 } as const;
