@@ -317,7 +317,7 @@ describe('useVoiceSession Integration', () => {
   });
 
   describe('WebSocket onmessage', () => {
-    it('enqueues audio data on response.audio.delta', async () => {
+    it('enqueues audio data on response.output_audio.delta', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -330,13 +330,13 @@ describe('useVoiceSession Integration', () => {
       });
 
       act(() => {
-        ws.simulateMessage({ type: 'response.audio.delta', delta: 'base64audiochunk==' });
+        ws.simulateMessage({ type: 'response.output_audio.delta', delta: 'base64audiochunk==' });
       });
 
       expect(mockPlaybackService.enqueue).toHaveBeenCalledWith('base64audiochunk==');
     });
 
-    it('adds AI transcript on response.audio_transcript.done', async () => {
+    it('adds AI transcript on response.output_audio_transcript.done', async () => {
       const { result } = renderHook(() => useVoiceSession());
 
       await act(async () => {
@@ -350,7 +350,7 @@ describe('useVoiceSession Integration', () => {
 
       act(() => {
         ws.simulateMessage({
-          type: 'response.audio_transcript.done',
+          type: 'response.output_audio_transcript.done',
           transcript: 'Hello, how can I help you?',
         });
       });

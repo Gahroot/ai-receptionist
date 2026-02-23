@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { useAudioRecorder } from '@siteed/expo-audio-studio';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 import { GROK_REALTIME_URL } from '../constants/api';
 import { useAuthStore } from '../stores/authStore';
 import { useCallStore } from '../stores/callStore';
@@ -7,6 +7,27 @@ import audioService from '../services/audioService';
 import audioPlaybackService from '../services/audioPlaybackService';
 import api from '../services/api';
 import logger from '../lib/logger';
+
+// Check for native module BEFORE requiring @siteed/expo-audio-studio.
+// requireOptionalNativeModule returns null (no throw) when the module is missing.
+// This prevents Metro from evaluating the package factory, which would call
+// requireNativeModule('ExpoAudioStream') and throw a fatal error in Expo Go.
+const AUDIO_STUDIO_AVAILABLE = !!requireOptionalNativeModule('ExpoAudioStream');
+
+type AudioRecorderHook = () => {
+  startRecording: (config: Record<string, unknown>) => Promise<unknown>;
+  stopRecording: () => Promise<unknown>;
+  isRecording: boolean;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const useAudioRecorder: AudioRecorderHook = AUDIO_STUDIO_AVAILABLE
+  ? require('@siteed/expo-audio-studio').useAudioRecorder
+  : () => ({
+      startRecording: async () => ({}),
+      stopRecording: async () => ({}),
+      isRecording: false,
+    });
 
 const MAX_RECONNECT_ATTEMPTS = 3;
 const BASE_RECONNECT_DELAY = 2000;
@@ -140,18 +161,18 @@ export function useVoiceSession() {
               logger.info(`Grok ${msg.type}`, {}, 'VoiceSession');
               break;
 
-            case 'response.audio.delta':
+            case 'response.output_audio.delta':
               // Incoming audio from Grok — base64 PCM16 24kHz
               if (msg.delta) {
                 audioPlaybackService.enqueue(msg.delta);
               }
               break;
 
-            case 'response.audio_transcript.delta':
+            case 'response.output_audio_transcript.delta':
               // Partial transcript of AI speech (streaming)
               break;
 
-            case 'response.audio_transcript.done':
+            case 'response.output_audio_transcript.done':
               // Complete AI transcript
               if (msg.transcript) {
                 addTranscript({ role: 'assistant', text: msg.transcript });
@@ -179,7 +200,7 @@ export function useVoiceSession() {
               useCallStore.getState().setUserSpeaking(false);
               break;
 
-            case 'response.audio.done':
+            case 'response.output_audio.done':
               // AI finished sending audio for this response
               break;
 

@@ -9,7 +9,8 @@ import WebSocket from 'ws';
 import { db } from '../db/index.js';
 import { agents, contacts, knowledgeBase, calls } from '../db/schema.js';
 import { config } from '../config.js';
-import { telnyxToGrok, grokToTelnyx, TELNYX_MIN_CHUNK_BYTES } from '../lib/audio.js';
+import { telnyxToGrok, grokToTelnyx, createDownsampleFilter, TELNYX_MIN_CHUNK_BYTES } from '../lib/audio.js';
+import type { DownsampleFilter } from '../lib/audio.js';
 import { toGrokVoice } from '../lib/grokVoice.js';
 import { eq, and } from 'drizzle-orm';
 
@@ -35,6 +36,7 @@ export class VoiceBridge {
   private transcript: TranscriptEntry[] = [];
   private startTime = Date.now();
   private streamId = '';
+  private downsampleFilter: DownsampleFilter = createDownsampleFilter();
 
   constructor(
     public readonly callControlId: string,
@@ -111,38 +113,14 @@ export class VoiceBridge {
       }
     }
 
-    // 5. Get Grok ephemeral token
+    // 5. Connect to Grok Realtime API (server-side: use API key directly)
     if (!config.xaiApiKey) {
       throw new Error('xAI API key not configured');
     }
 
-    const tokenRes = await fetch('https://api.x.ai/v1/realtime/client_secrets', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.xaiApiKey}`,
-      },
-      body: JSON.stringify({ expires_after: { seconds: 300 } }),
-    });
-
-    if (!tokenRes.ok) {
-      const errBody = await tokenRes.text().catch(() => '');
-      throw new Error(`Failed to get Grok token: ${tokenRes.status} ${errBody}`);
-    }
-
-    const tokenData = (await tokenRes.json()) as {
-      value: string;
-      expires_at: number;
-    };
-    if (!tokenData.value) {
-      throw new Error(`Invalid xAI token response: ${JSON.stringify(tokenData)}`);
-    }
-    const grokToken = tokenData.value;
-
-    // 6. Connect to Grok Realtime API
     console.log(`${tag} Connecting to Grok Realtime API...`);
     this.grokWs = new WebSocket('wss://api.x.ai/v1/realtime', {
-      headers: { Authorization: `Bearer ${grokToken}` },
+      headers: { Authorization: `Bearer ${config.xaiApiKey}` },
     });
 
     this.grokWs.on('open', () => {
@@ -155,7 +133,7 @@ export class VoiceBridge {
           voice: toGrokVoice(agent.voiceId),
           input_audio_format: 'pcm16',
           output_audio_format: 'pcm16',
-          input_audio_transcription: { model: 'whisper-1' },
+          input_audio_transcription: { model: 'grok-2-public' },
           turn_detection: {
             type: 'server_vad',
             threshold: 0.5,
@@ -223,15 +201,16 @@ export class VoiceBridge {
 
     switch (msg.type) {
       case 'session.created':
-        console.log(`${tag} Grok session created`);
+      case 'session.updated':
+        console.log(`${tag} Grok ${msg.type}`);
         this.grokReady = true;
         this.maybeTriggerGreeting(initialGreeting, tag);
         break;
 
-      case 'response.audio.delta':
+      case 'response.output_audio.delta':
         if (msg.delta && this.telnyxWs?.readyState === WebSocket.OPEN) {
           const pcm24k = Buffer.from(msg.delta, 'base64');
-          const mulaw = grokToTelnyx(pcm24k);
+          const mulaw = grokToTelnyx(pcm24k, this.downsampleFilter);
 
           // Buffer until we have at least TELNYX_MIN_CHUNK_BYTES
           this.telnyxBuffer = Buffer.concat([this.telnyxBuffer, mulaw]);
@@ -247,7 +226,7 @@ export class VoiceBridge {
         }
         break;
 
-      case 'response.audio_transcript.done':
+      case 'response.output_audio_transcript.done':
         if (msg.transcript) {
           this.transcript.push({ role: 'assistant', text: msg.transcript });
         }
@@ -256,6 +235,14 @@ export class VoiceBridge {
       case 'conversation.item.input_audio_transcription.completed':
         if (msg.transcript) {
           this.transcript.push({ role: 'user', text: msg.transcript });
+        }
+        break;
+
+      default:
+        if (msg.type === 'error') {
+          console.error(`${tag} Grok error:`, raw.toString());
+        } else if (!msg.type.startsWith('response.output_audio')) {
+          console.log(`${tag} Grok event: ${msg.type}`);
         }
         break;
     }
